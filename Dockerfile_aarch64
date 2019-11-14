@@ -1,0 +1,96 @@
+ARG ARM_ARCH=arm64v8
+FROM ${ARM_ARCH}/ubuntu:bionic
+
+WORKDIR /
+COPY ./qemu-user-static/qemu-aarch64-static /usr/bin/
+RUN mkdir ros2-linux
+COPY ./ros2-linux /ros2-linux
+RUN ls ros2-linux
+
+RUN apt update
+
+# configure timezone
+RUN echo "Asia/Taipei" > /etc/timezone
+RUN ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
+RUN apt install -y tzdata
+RUN dpkg-reconfigure --frontend noninteractive tzdata
+
+RUN apt install -y \
+    pkg-config \
+    lsb-release \
+    curl \
+    gfortran \
+    libpcre3 \
+    libpcre3-dev \
+    bash-completion \
+    dirmngr \
+    gnupg2 \
+    ca-certificates
+
+
+# ROS2 dependencies
+RUN apt install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    libpython3-dev
+
+ENV LANG en_US.UTF-8
+ENV LC_ALL C.UTF-8
+
+RUN curl http://repo.ros2.org/repos.key | apt-key add -
+RUN sh -c 'echo "deb [arch=amd64,arm64] http://repo.ros2.org/ubuntu/main \
+    `lsb_release -cs` main" > /etc/apt/sources.list.d/ros2-latest.list'
+
+RUN apt update
+RUN apt install -y \
+    python3-colcon-common-extensions \
+    python3-pip \
+    python3-rosdep
+
+RUN python3 -m pip install -U \
+    argcomplete \
+    flake8 \
+    flake8-blind-except \
+    flake8-builtins \
+    flake8-class-newline \
+    flake8-comprehensions \
+    flake8-deprecated \
+    flake8-docstrings \
+    flake8-import-order \
+    flake8-quotes \
+    pytest-repeat \
+    pytest-rerunfailures
+
+RUN python3 -m pip install -U \
+    pytest \
+    pytest-cov \
+    pytest-runner \
+    setuptools
+
+RUN apt install --no-install-recommends -y \
+    libasio-dev \
+    libtinyxml2-dev
+
+# Install packages dependencies
+RUN c_rehash /etc/ssl/certs
+RUN rosdep init
+RUN rosdep update
+
+RUN rosdep install --from-paths ros2-linux/share \
+    --ignore-src \
+    --rosdistro dashing -y \
+    --skip-keys "console_bridge \
+        fastcdr \
+        fastrtps \
+        libopensplice67 \
+        libopensplice69 \
+        rti-connext-dds-5.3.1 \
+        urdfdom_headers"
+
+# build this image:
+# $ docker build -t aarch64_ros2:latest -f ./Dockerfile_aarch64
+#
+# after running the image, export the file system of the container to host
+# $ docker export -o aarch64_pi.tar <CONTAINER ID>
