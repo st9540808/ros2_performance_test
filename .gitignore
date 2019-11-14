@@ -3,3 +3,5 @@ build/
 install/
 log/
 .vscode/
+docker_ws/
+.ros2_course/
