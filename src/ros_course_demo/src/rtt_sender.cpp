@@ -71,8 +71,9 @@ int main(int argc, char *argv[])
       rclcpp::spin(node);
       return 0;
     }, node);
+  ack_thread.detach();
   
-  for (int i = 0; i < 10000 && rclcpp::ok(); i++) {
+  for (int i = 0; i < 100 && rclcpp::ok(); i++) {
     auto msg = std_msgs::msg::String();
     
     std::snprintf(str, 7, "%06d", i);
@@ -87,10 +88,9 @@ int main(int argc, char *argv[])
     ulock.lock();
     acked = 0;
     ulock.unlock();
-    rclcpp::sleep_for(500ms);
+    rclcpp::sleep_for(50ms);
   }
 
-  ack_thread.join();
   rclcpp::shutdown();
   return 0;
 }

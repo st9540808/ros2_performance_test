@@ -33,10 +33,8 @@ class Listener : public rclcpp::Node
 public:
   Listener() : Node("listener") {
     sub_ = this->create_subscription<std_msgs::msg::String>(
-      "chatter",
-      rclcpp::QoS(10).reliable(),
-      std::bind(&Listener::callback, this, std::placeholders::_1)
-      );
+      "chatter", rclcpp::QoS(10).reliable(),
+      std::bind(&Listener::callback, this, std::placeholders::_1));
   }
 
 private:

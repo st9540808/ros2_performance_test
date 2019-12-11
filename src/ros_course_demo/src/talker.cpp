@@ -65,18 +65,18 @@ int main(int argc, char *argv[])
   //   rclcpp::sleep_for(50ms);
   // }
   // sleep(2);
-  // while (node->count_subscribers("/chatter") < 1)
-  //   rclcpp::sleep_for(50ms);
+  while (node->count_subscribers("/chatter") < 1)
+    rclcpp::sleep_for(100ms);
 
   // rclcpp::spin(node);
   char str[10];
-  for (int i = 0; i < 10000 && rclcpp::ok(); i++) {
+  for (int i = 0; i < 100 && rclcpp::ok(); i++) {
     auto message = std_msgs::msg::String();
     std::snprintf(str, 7, "%06d", i);
     message.data = "hello world " + std::string(str);
     RCLCPP_INFO(node->get_logger(), "Publishing: '%s'", message.data.c_str());
     node->pub_->publish(message);
-    rclcpp::sleep_for(500ms);
+    rclcpp::sleep_for(50ms);
   }
 
   rclcpp::shutdown();
