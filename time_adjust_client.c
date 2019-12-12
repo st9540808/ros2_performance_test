@@ -30,7 +30,7 @@ int main(int argc, char** argv) {
 
     struct TS_t ts_state;
     struct TS_T1_T4 t1_t4[SEND_CNT];
-// Create server socket
+    // Create server socket
     int serverfd;
     serverfd = socket(PF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
     ser_addr.sin_addr.s_addr = inet_addr(argv[1]);
 
 
-// Create client socket
+    // Create client socket
     int clientfd;
     struct sockaddr_in client_addr;
     int tos = IPTOS_LOWDELAY, timestamp = 1;
@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
     msgh.msg_control = aux;
     msgh.msg_controllen = sizeof(aux);
 
-    for(int i = 0; i < SEND_CNT; i) {
+    for (int i = 0; i < SEND_CNT; i) {
         gettimeofday(&ts_state.aorg, NULL);
         if ( sendto(serverfd, &ts_state, sizeof(ts_state), 0, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) == -1) {
             perror("talker: sendto");
@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
     }
     float offset[SEND_CNT];
     double T1, T2, T3, T4;
-    for(int i = 0; i < SEND_CNT; i++) {
+    for (int i = 0; i < SEND_CNT; i++) {
         printf("%d T1: %d.%d\n",i,t1_t4[i].T1);
         printf("%d T2: %d.%d\n",i,t1_t4[i].T2);
         printf("%d T3: %d.%d\n",i,t1_t4[i].T3);
@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
         printf("T1:%f\n",T1);
     }
 
-    for(int i = 0; i < SEND_CNT; i++) {
+    for (int i = 0; i < SEND_CNT; i++) {
 
 
 
