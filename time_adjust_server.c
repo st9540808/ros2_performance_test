@@ -20,7 +20,7 @@ struct TS_t {
     struct timeval aorg, recv, xmit;
 };
 
-int main(int argc, char** argv)
+int main(int argc, const char** argv)
 {
     struct TS_t ts_state;
 
@@ -35,7 +35,7 @@ int main(int argc, char** argv)
         return -1;
     }
 
-    memset(&addr, 0, sizeof(addr));
+    addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(4950);
     if (bind(sockfd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
@@ -58,11 +58,10 @@ int main(int argc, char** argv)
     memset(&addr_client, 0, sizeof(addr_client));
     addr_client.sin_family = AF_INET;
     addr_client.sin_port = htons(4951);
-    addr_client.sin_addr.s_addr = inet_addr(argv[1]);
+    // addr_client.sin_addr.s_addr = inet_addr(argv[1]);
 
     // Extract control message from received packet.
-    struct timeval drv_ts, *tmp_ts;
-    tmp_ts = NULL;
+    struct timeval drv_ts, *tmp_ts = NULL;
     struct msghdr msgh = {0};
     struct cmsghdr *cmsg = NULL;
 
@@ -75,8 +74,11 @@ int main(int argc, char** argv)
     msgh.msg_iovlen = 1;
 
     char aux[128];
+    struct sockaddr msg_name;
     msgh.msg_control = aux;
     msgh.msg_controllen = sizeof(aux);
+    msgh.msg_name = &msg_name;
+    msgh.msg_namelen = sizeof msg_name;
 
     for (int i = 0; i < RECV_CNT; i++) {
         int rx = recvmsg(sockfd, &msgh, 0);
@@ -84,6 +86,8 @@ int main(int argc, char** argv)
             perror("recvmsg");
             exit(1);
         }
+        printf("%s\n", inet_ntoa(((struct sockaddr_in *)msgh.msg_name)->sin_addr));
+        addr_client.sin_addr = ((struct sockaddr_in *)msgh.msg_name)->sin_addr;
 
         for (cmsg = CMSG_FIRSTHDR(&msgh); cmsg; cmsg = CMSG_NXTHDR(&msgh, cmsg)) {
             if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_TIMESTAMP) {
@@ -108,10 +112,9 @@ int main(int argc, char** argv)
             exit(1);
         }
 
-        printf("%d xmit \"%d.%d \" \n", i, ts_state.xmit.tv_sec, ts_state.xmit.tv_usec);
-        printf("%d recv \"%d.%d \" \n", i, drv_ts.tv_sec, drv_ts.tv_usec);
-        printf("%d aorg \"%d.%d \" \n\n", i, ts_state.aorg.tv_sec, ts_state.aorg.tv_usec);
-
+        printf("%d xmit \"%d.%d\" \n", i, ts_state.xmit.tv_sec, ts_state.xmit.tv_usec);
+        printf("%d recv \"%d.%d\" \n", i, drv_ts.tv_sec, drv_ts.tv_usec);
+        printf("%d aorg \"%d.%d\" \n\n", i, ts_state.aorg.tv_sec, ts_state.aorg.tv_usec);
     }
 
 AA:
