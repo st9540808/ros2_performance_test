@@ -86,14 +86,14 @@ int main(int argc, char** argv) {
 
     for (int i = 0; i < SEND_CNT; i) {
         gettimeofday(&ts_state.aorg, NULL);
-        if ( sendto(serverfd, &ts_state, sizeof(ts_state), 0, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) == -1) {
+        if (sendto(serverfd, &ts_state, sizeof(ts_state), 0, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) == -1) {
             perror("talker: sendto");
             exit(1);
         }
 
-        int rx = recvmsg(clientfd, &msgh, 0 );
-        if ( rx < 0 ) {
-            perror( "recvmsg" );
+        int rx = recvmsg(clientfd, &msgh, 0);
+        if (rx < 0) {
+            perror("recvmsg");
             exit(1);
         }
 
@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
         offset[i] = ((T2 - T1) + (T3 - T4))/2;
         printf("offset %d: %f\n",i, offset[i]);
         fflush(stdout);
-        usleep(1000 * 30);
+        usleep(1000 * 3);
     }
     float offset[SEND_CNT];
     double T1, T2, T3, T4;
@@ -151,9 +151,6 @@ int main(int argc, char** argv) {
     }
 
     for (int i = 0; i < SEND_CNT; i++) {
-
-
-
         printf("offset %d: %f\n",i, offset[i]);
     }
 
