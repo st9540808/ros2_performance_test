@@ -22,29 +22,38 @@ struct TS_t {
 struct TS_T1_T4 {
     struct timeval T1, T2, T3, T4;
 };
-int main(int argc, char** argv) {
+
+float get_time_offset(char *server_addr);
+
+int main(int argc, char** argv)
+{
     if (argc != 2) {
         fprintf(stderr,"usage: talker hostname message\n");
         exit(1);
     }
 
+    get_time_offset(argv[1]);
+}
+
+float get_time_offset(char *server_addr)
+{
     struct TS_t ts_state;
     struct TS_T1_T4 t1_t4[SEND_CNT];
     // Create server socket
     int serverfd;
     serverfd = socket(PF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 
-    struct sockaddr_in ser_addr;
-    memset(&ser_addr, 0, sizeof(ser_addr));
-    ser_addr.sin_family = AF_INET;
-    ser_addr.sin_port = htons(4950);
-    ser_addr.sin_addr.s_addr = inet_addr(argv[1]);
-
+    struct sockaddr_in serv_addr;
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(4950);
+    serv_addr.sin_addr.s_addr = inet_addr(server_addr);
 
     // Create client socket
     int clientfd;
     struct sockaddr_in client_addr;
     int tos = IPTOS_LOWDELAY, timestamp = 1;
+    struct timeval timeout;
 
     clientfd = socket(PF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (clientfd < 0) {
@@ -63,6 +72,14 @@ int main(int argc, char** argv) {
 
     if (setsockopt(clientfd, SOL_SOCKET, SO_TIMESTAMP, &timestamp, sizeof(timestamp)) < 0) {
         perror("Failed to enable timestamp support");
+        close(clientfd);
+        return -1;
+    }
+
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 200 * 1000; // 200ms
+    if (setsockopt(clientfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout) < 0) {
+        perror("Failed to enable receive timeout");
         close(clientfd);
         return -1;
     }
@@ -86,7 +103,8 @@ int main(int argc, char** argv) {
 
     for (int i = 0; i < SEND_CNT; i) {
         gettimeofday(&ts_state.aorg, NULL);
-        if (sendto(serverfd, &ts_state, sizeof(ts_state), 0, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) == -1) {
+        if (sendto(serverfd, &ts_state, sizeof(ts_state), 0,
+                   (struct sockaddr *) &serv_addr, sizeof(serv_addr)) == -1) {
             perror("talker: sendto");
             exit(1);
         }
@@ -94,7 +112,9 @@ int main(int argc, char** argv) {
         int rx = recvmsg(clientfd, &msgh, 0);
         if (rx < 0) {
             perror("recvmsg");
-            exit(1);
+            if (errno != EAGAIN && errno != EWOULDBLOCK)
+                exit(1);
+            errno = 0;
         }
 
         for (cmsg = CMSG_FIRSTHDR(&msgh); cmsg; cmsg = CMSG_NXTHDR(&msgh, cmsg)) {
@@ -131,27 +151,6 @@ int main(int argc, char** argv) {
         printf("offset %d: %f\n",i, offset[i]);
         fflush(stdout);
         usleep(1000 * 3);
-    }
-    float offset[SEND_CNT];
-    double T1, T2, T3, T4;
-    for (int i = 0; i < SEND_CNT; i++) {
-        printf("%d T1: %d.%d\n",i,t1_t4[i].T1);
-        printf("%d T2: %d.%d\n",i,t1_t4[i].T2);
-        printf("%d T3: %d.%d\n",i,t1_t4[i].T3);
-        printf("%d T4: %d.%d\n",i,t1_t4[i].T4);
-
-        T1 = t1_t4[i].T1.tv_sec + t1_t4[i].T1.tv_usec * 1.0e-6;
-        T2 = t1_t4[i].T2.tv_sec + t1_t4[i].T2.tv_usec * 1.0e-6;
-        T3 = t1_t4[i].T3.tv_sec + t1_t4[i].T3.tv_usec * 1.0e-6;
-        T4 = t1_t4[i].T4.tv_sec + t1_t4[i].T4.tv_usec * 1.0e-6;
-
-
-        offset[i] = ((T2 - T1) + (T3 - T4))/2;
-        printf("T1:%f\n",T1);
-    }
-
-    for (int i = 0; i < SEND_CNT; i++) {
-        printf("offset %d: %f\n",i, offset[i]);
     }
 
 AA:
