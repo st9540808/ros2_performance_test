@@ -66,7 +66,7 @@ def print_event(cpu, data, size):
     data_keys = ['ts', 'comm']
     d = {field:getattr(event, field) for field in data_keys} # a data point in sofa
     d['ts'] = d['ts'] / 1e9 + sofa_time.get_unix_mono_diff()
-    ebpf_data.append(d)
+    ebpf_data.append(d['ts'])
     print(d['ts'])
 
 # loop with callback to print_event
@@ -95,4 +95,13 @@ for i in range(n_iter):
 
 print(time_offset_median)
 print('exit')
-exit(0)
+
+with open('./listener_ebpf.data', 'w') as f:
+    for data in ebpf_data:
+        offset = 0
+        for off in time_offset_median:
+            if off[0][0] <= data <= off[0][1]:
+                offset = off[1]
+        print(offset)
+
+        f.write(str(data - offset) + '\n')
