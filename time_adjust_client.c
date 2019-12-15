@@ -14,33 +14,43 @@
 
 #define SERVER_PORT "4950"
 #define CLIENT_PORT "4951"
-#define SEND_CNT    5
+#define SEND_CNT    1
 
-struct TS_t {
-    struct timeval aorg, recv, xmit;
-};
-struct TS_T1_T4 {
-    struct timeval T1, T2, T3, T4;
-};
 
-float get_time_offset(char *server_addr);
+int get_time_offset(const char *server_addr, double *off);
 
-int main(int argc, char** argv)
+int __main(int argc, char** argv)
 {
+    double off;
+
     if (argc != 2) {
         fprintf(stderr,"usage: talker hostname message\n");
         exit(1);
     }
 
-    get_time_offset(argv[1]);
+    if (get_time_offset(argv[1], &off) < 0)
+        puts("error in get_time_offset");
+    else
+        printf("offset = %f\n", off);
+
+    return 0;
 }
 
-float get_time_offset(char *server_addr)
+int get_time_offset(const char *server_addr, double *off)
 {
+    struct TS_t {
+        struct timeval aorg, recv, xmit;
+    };
+    struct TS_T1_T4 {
+        struct timeval T1, T2, T3, T4;
+    };
+
     struct TS_t ts_state;
     struct TS_T1_T4 t1_t4[SEND_CNT];
+    int ret = 0;
     // Create server socket
     int serverfd;
+
     serverfd = socket(PF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 
     struct sockaddr_in serv_addr;
@@ -76,6 +86,7 @@ float get_time_offset(char *server_addr)
         return -1;
     }
 
+    // set timeout for recvmsg
     timeout.tv_sec = 0;
     timeout.tv_usec = 200 * 1000; // 200ms
     if (setsockopt(clientfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout) < 0) {
@@ -101,20 +112,20 @@ float get_time_offset(char *server_addr)
     msgh.msg_control = aux;
     msgh.msg_controllen = sizeof(aux);
 
-    for (int i = 0; i < SEND_CNT; i) {
+    for (int i = 0; i < SEND_CNT; i++) {
         gettimeofday(&ts_state.aorg, NULL);
         if (sendto(serverfd, &ts_state, sizeof(ts_state), 0,
                    (struct sockaddr *) &serv_addr, sizeof(serv_addr)) == -1) {
             perror("talker: sendto");
-            exit(1);
+            ret = -1;
+            goto clear_up;
         }
 
         int rx = recvmsg(clientfd, &msgh, 0);
         if (rx < 0) {
             perror("recvmsg");
-            if (errno != EAGAIN && errno != EWOULDBLOCK)
-                exit(1);
-            errno = 0;
+            ret = -1;
+            goto clear_up;
         }
 
         for (cmsg = CMSG_FIRSTHDR(&msgh); cmsg; cmsg = CMSG_NXTHDR(&msgh, cmsg)) {
@@ -125,12 +136,14 @@ float get_time_offset(char *server_addr)
             }
         }
 
-        if (tmp_ts == NULL)
-            goto AA;
+        if (tmp_ts == NULL) {
+            ret = -1;
+            goto clear_up;
+        }
 
         struct TS_t* ts_from_server;
         ts_from_server = iov.iov_base;
-        if (iov.iov_len < sizeof *(ts_from_server))
+        if (iov.iov_len < sizeof *ts_from_server)
             printf("weired\n");
 
         if (ts_state.aorg.tv_sec == (*ts_from_server).aorg.tv_sec) {
@@ -142,19 +155,17 @@ float get_time_offset(char *server_addr)
 
         double T1, T2, T3, T4;
 
-        float offset[SEND_CNT];
+        double offset[SEND_CNT];
         T1 = t1_t4[i].T1.tv_sec + t1_t4[i].T1.tv_usec * 1.0e-6;
         T2 = t1_t4[i].T2.tv_sec + t1_t4[i].T2.tv_usec * 1.0e-6;
         T3 = t1_t4[i].T3.tv_sec + t1_t4[i].T3.tv_usec * 1.0e-6;
         T4 = t1_t4[i].T4.tv_sec + t1_t4[i].T4.tv_usec * 1.0e-6;
         offset[i] = ((T2 - T1) + (T3 - T4))/2;
-        printf("offset %d: %f\n",i, offset[i]);
-        fflush(stdout);
-        usleep(1000 * 3);
+        *off = offset[i];
     }
 
-AA:
+clear_up:
     close(clientfd);
     close(serverfd);
-    return 0;
+    return ret;
 }
