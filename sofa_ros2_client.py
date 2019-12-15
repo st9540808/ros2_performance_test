@@ -15,6 +15,7 @@ if len(sys.argv) > 1:
     serv_addr = sys.argv[1]
     print(sys.argv[1])
 
+unix_mono_diff = sofa_time.get_unix_mono_diff()
 time_offset_table = []
 time_offset_median = []
 class time_offset_from(threading.Thread):
@@ -65,7 +66,7 @@ def print_event(cpu, data, size):
     event = b["events"].event(data)
     data_keys = ['ts', 'comm']
     d = {field:getattr(event, field) for field in data_keys} # a data point in sofa
-    d['ts'] = d['ts'] / 1e9 + sofa_time.get_unix_mono_diff()
+    d['ts'] = d['ts'] / 1e9 + unix_mono_diff
     ebpf_data.append(d['ts'])
     print(d['ts'])
 
