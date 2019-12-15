@@ -25,7 +25,7 @@ class time_offset_from(threading.Thread):
         self.start()
     def run(self):
         global time_offset_table
-        while not self.stopped.wait(0.4):
+        while not self.stopped.wait(1):
             ts = time.time()
             off = sofa_time.get_time_offset_from(self.serv_addr)
             time_offset_table.append([ts, off])
@@ -45,11 +45,10 @@ struct data_t {
 BPF_PERF_OUTPUT(events);
 
 int subscription_probe(struct pt_regs *ctx) {
-    struct data_t data;
-    u64 curr;
+    struct data_t data = {};
 
     data.ts = bpf_ktime_get_ns();
-    events.perf_submit(ctx, prev, sizeof(struct data_t));
+    events.perf_submit(ctx, &data, sizeof(struct data_t));
     return 0;
 }
 """
