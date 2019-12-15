@@ -8,6 +8,7 @@ import sofa_time
 import statistics
 #import pandas as pd
 import time, sys
+import math
 
 serv_addr = '192.168.3.10'
 if len(sys.argv) > 1:
@@ -15,6 +16,7 @@ if len(sys.argv) > 1:
     print(sys.argv[1])
 
 time_offset_table = []
+time_offset_median = []
 class time_offset_from(threading.Thread):
     def __init__(self, serv_addr):
         threading.Thread.__init__(self)
@@ -23,7 +25,7 @@ class time_offset_from(threading.Thread):
         self.start()
     def run(self):
         global time_offset_table
-        while not self.stopped.wait(1):
+        while not self.stopped.wait(0.4):
             ts = sofa_time.get_monotonic_time()
             off = sofa_time.get_time_offset_from(self.serv_addr)
             time_offset_table.append([ts, off])
@@ -38,8 +40,22 @@ while 1:
         time.sleep(1)
     except KeyboardInterrupt:
         t.stop()
-        print('exit')
+        n = math.ceil(len(time_offset_table) / 30) * 30
+        n_iter = math.ceil(len(time_offset_table) / 30)
+
+        # pad time_offset_table
+        last = time_offset_table[-1]
+        time_offset_table += [last] * (n-len(time_offset_table))
+
+        num_elem = len(time_offset_table)
+        for i in range(n_iter):
+            print(i)
+            data_list = [x[1] for x in time_offset_table[i*30:(i+1)*30]]
+            print(statistics.median(data_list))
+
+        print(len(time_offset_table))
         print(time_offset_table)
+        print('exit')
         exit(0)
 
 # define BPF program
