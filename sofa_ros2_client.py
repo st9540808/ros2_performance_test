@@ -47,14 +47,13 @@ while 1:
         last = time_offset_table[-1]
         time_offset_table += [last] * (n-len(time_offset_table))
 
-        num_elem = len(time_offset_table)
         for i in range(n_iter):
             print(i)
             data_list = [x[1] for x in time_offset_table[i*30:(i+1)*30]]
-            print(statistics.median(data_list))
+            median = statistics.median(data_list)
+            time_offset_median.append([[time_offset_table[i][0], time_offset_table[(i+1)*30-1][0]], median])
 
-        print(len(time_offset_table))
-        print(time_offset_table)
+        print(time_offset_median)
         print('exit')
         exit(0)
 
