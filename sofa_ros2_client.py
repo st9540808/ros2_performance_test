@@ -7,7 +7,12 @@ import threading
 import sofa_time
 import statistics
 #import pandas as pd
-import time
+import time, sys
+
+serv_addr = '192.168.3.10'
+if len(sys.argv) > 1:
+    serv_addr = sys.argv[1]
+    print(sys.argv[1])
 
 time_offset_table = []
 class time_offset_from(threading.Thread):
@@ -27,7 +32,7 @@ class time_offset_from(threading.Thread):
         self.stopped.set()
 
 
-t = time_offset_from('192.168.3.10')
+t = time_offset_from(serv_addr)
 while 1:
     try:
         time.sleep(1)
