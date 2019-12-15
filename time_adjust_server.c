@@ -80,7 +80,7 @@ int main(int argc, const char** argv)
     msgh.msg_name = &msg_name;
     msgh.msg_namelen = sizeof msg_name;
 
-    for (int i = 0; i < RECV_CNT; i++) {
+    for (unsigned i = 1; i; i++) {
         int rx = recvmsg(sockfd, &msgh, 0);
         if (rx < 0) {
             perror("recvmsg");
