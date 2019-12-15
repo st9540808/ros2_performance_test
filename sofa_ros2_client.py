@@ -6,7 +6,7 @@ from bcc.utils import printb
 import threading
 import sofa_time
 import statistics
-import pandas as pd
+#import pandas as pd
 import time
 
 time_offset_table = []
@@ -19,7 +19,10 @@ class time_offset_from(threading.Thread):
     def run(self):
         global time_offset_table
         while not self.stopped.wait(1):
-            print(time.time(), sofa_time.get_time_offset_from(self.serv_addr))
+            ts = sofa_time.get_monotonic_time()
+            off = sofa_time.get_time_offset_from(self.serv_addr)
+            time_offset_table.append([ts, off])
+            print('%.5f  %.5f' % (ts, off))
     def stop(self):
         self.stopped.set()
 
@@ -31,6 +34,7 @@ while 1:
     except KeyboardInterrupt:
         t.stop()
         print('exit')
+        print(time_offset_table)
         exit(0)
 
 # define BPF program
@@ -48,7 +52,7 @@ int subscription_probe(struct pt_regs *ctx) {
     struct data_t data;
     u64 curr;
 
-    data.ts = bpf_ktime_get_ns();
+    data.ts = bpf_ktime_get_ns()*1e3;
     events.perf_submit(ctx, prev, sizeof(struct data_t));
     return 0;
 }

@@ -23,11 +23,17 @@ get_time_offset = libtime_adjust_client.get_time_offset
 get_time_offset.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_double)]
 
 def get_monotonic_time():
+    if sys.version_info[0] == 3:
+        return time.monotonic()
     t = timespec()
     if clock_gettime(CLOCK_MONOTONIC_RAW , ctypes.pointer(t)) != 0:
         errno_ = ctypes.get_errno()
         raise OSError(errno_, os.strerror(errno_))
     return t.tv_sec + t.tv_nsec * 1e-9
+
+def get_monotonic_time_us():
+    if sys.version_info[0] == 3:
+        return int(time.monotonic() * 1e6)
 
 def get_uptime():
     with open('/proc/uptime', 'r') as f:
