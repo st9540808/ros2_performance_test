@@ -26,7 +26,7 @@ class time_offset_from(threading.Thread):
     def run(self):
         global time_offset_table
         while not self.stopped.wait(0.4):
-            ts = sofa_time.get_monotonic_time()
+            ts = time.time()
             off = sofa_time.get_time_offset_from(self.serv_addr)
             time_offset_table.append([ts, off])
             print('%.5f  %.5f' % (ts, off))
