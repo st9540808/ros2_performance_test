@@ -76,7 +76,6 @@ t = time_offset_from(serv_addr)
 while 1:
     try:
         b.perf_buffer_poll()
-        time.sleep(1)
     except KeyboardInterrupt:
         t.stop()
         break
