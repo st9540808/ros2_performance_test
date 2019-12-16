@@ -104,4 +104,4 @@ with open('./listener_ebpf.data', 'w') as f:
                 offset = off[1]
         print(offset)
 
-        f.write(str(data - offset) + '\n')
+        f.write(str(data + offset) + '\n')
