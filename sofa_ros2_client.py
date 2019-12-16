@@ -66,7 +66,7 @@ def print_event(cpu, data, size):
     event = b["events"].event(data)
     data_keys = ['ts', 'comm']
     d = {field:getattr(event, field) for field in data_keys} # a data point in sofa
-    d['ts'] = d['ts'] / 1e9 + unix_mono_diff
+    d['ts'] = d['ts'] / 1e9 + sofa_time.get_unix_mono_diff()
     ebpf_data.append(d['ts'])
     print(d['ts'])
 
