@@ -94,7 +94,7 @@ for i in range(n_iter):
     data_list = [x[1] for x in time_offset_table[i*iv_length:(i+1)*iv_length]]
     median = statistics.median(data_list)
     time_offset_median.append([[time_offset_table[i*iv_length][0] - sample_period,
-                                time_offset_table[(i+1)*iv_length-1][0]] + sample_period,
+                                time_offset_table[(i+1)*iv_length-1][0] + sample_period],
                                median])
 
 print(time_offset_median)
