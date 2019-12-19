@@ -4,6 +4,8 @@ install/
 log/
 docker_ws/
 sofalog/
+uftrace.data/
+uftrace.data.old/
 .vscode/
 .docker_ws/
 .ros2_course/
