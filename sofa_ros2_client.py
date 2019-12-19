@@ -11,6 +11,8 @@ import time, sys
 import math
 
 serv_addr = '192.168.3.10'
+iv_length = 30 # length of the interval to determine time offset
+
 if len(sys.argv) > 1:
     serv_addr = sys.argv[1]
     print(sys.argv[1])
@@ -80,18 +82,17 @@ while 1:
         t.stop()
         break
 
-n = math.ceil(len(time_offset_table) / 30) * 30
-n_iter = math.ceil(len(time_offset_table) / 30)
+n = math.ceil(len(time_offset_table) / iv_length) * iv_length
+n_iter = math.ceil(len(time_offset_table) / iv_length)
 
 # pad time_offset_table
 last = time_offset_table[-1]
 time_offset_table += [last] * (n-len(time_offset_table))
 
 for i in range(n_iter):
-    print(i)
-    data_list = [x[1] for x in time_offset_table[i*30:(i+1)*30]]
+    data_list = [x[1] for x in time_offset_table[i*iv_length:(i+1)*iv_length]]
     median = statistics.median(data_list)
-    time_offset_median.append([[time_offset_table[i][0], time_offset_table[(i+1)*30-1][0]], median])
+    time_offset_median.append([[time_offset_table[i][0], time_offset_table[(i+1)*iv_length-1][0]], median])
 
 print(time_offset_median)
 print('exit')
