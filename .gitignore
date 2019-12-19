@@ -2,6 +2,8 @@ log*
 build/
 install/
 log/
-.vscode/
 docker_ws/
+sofalog/
+.vscode/
+.docker_ws/
 .ros2_course/
