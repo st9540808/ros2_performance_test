@@ -11,7 +11,8 @@ import time, sys
 import math
 
 serv_addr = '192.168.3.10'
-iv_length = 30 # length of the interval to determine time offset
+iv_length = 30    # length of the interval to determine time offset
+sample_period = 1 # sample period for time offset
 
 if len(sys.argv) > 1:
     serv_addr = sys.argv[1]
@@ -28,7 +29,7 @@ class time_offset_from(threading.Thread):
         self.start()
     def run(self):
         global time_offset_table
-        while not self.stopped.wait(1):
+        while not self.stopped.wait(sample_period):
             ts = time.time()
             off = sofa_time.get_time_offset_from(self.serv_addr)
             time_offset_table.append([ts, off])
@@ -92,7 +93,9 @@ time_offset_table += [last] * (n-len(time_offset_table))
 for i in range(n_iter):
     data_list = [x[1] for x in time_offset_table[i*iv_length:(i+1)*iv_length]]
     median = statistics.median(data_list)
-    time_offset_median.append([[time_offset_table[i][0], time_offset_table[(i+1)*iv_length-1][0]], median])
+    time_offset_median.append([[time_offset_table[i*iv_length][0] - sample_period,
+                                time_offset_table[(i+1)*iv_length-1][0]] + sample_period,
+                               median])
 
 print(time_offset_median)
 print('exit')
