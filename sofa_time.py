@@ -66,7 +66,7 @@ if __name__ == "__main__":
     # print(time.time() - time.monotonic())
     my_list = []
     for i in range(1000):
-        data = [int(time.time()*1e3), round(get_time_offset_from('192.168.3.10')*1e3, 6)]
+        data = [int(time.time()*1e3), round(get_time_offset_from('192.168.3.1')*1e3, 6)]
         my_list.append(data)
 
         print(data[0], data[1])
