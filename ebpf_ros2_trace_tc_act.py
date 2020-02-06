@@ -62,6 +62,7 @@ static u16 msg2len[23] = {
 #define RTPS_DATA_WRITERID_OFF 12
 #define RTPS_DATA_SEQNUM_OFF 16
 #define RTPS_SUBMSG_ID_DATA 0x15
+// find the offset to the submsg in a RTPS message
 static int find_rtps_data_submsg(struct __sk_buff *skb, u8 *msg_id) {
     int off = 0;
     *msg_id = 0;
@@ -78,13 +79,23 @@ static int find_rtps_data_submsg(struct __sk_buff *skb, u8 *msg_id) {
     return off;
 }
 
+// get guid and seqnum
+static void get_guid_seqnum(struct __sk_buff *skb, int off, u8 *guid, u64 *seqnum) {
+    s32 high;
+    u32 low;
+
+    bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_GUIDPREFIX_OFF, guid, 12);
+    bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_HLEN + off + RTPS_DATA_WRITERID_OFF, &guid[12], 4);
+    bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_HLEN + off + RTPS_DATA_SEQNUM_OFF, &high, 4);
+    bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_HLEN + off + RTPS_DATA_SEQNUM_OFF + 4, &low, 4);
+    *seqnum = (((u64) high) << 32u) | low;
+}
+
 int cls_ros2_egress_prog(struct __sk_buff *skb) {
     struct cls_egress_data_t data = {};
     char *magic = data.magic;
     u8 msg_id = 0;
     int off = 0;
-    s32 high;
-    u32 low;
 
     bpf_skb_load_bytes(skb, RTPS_OFF, &data.magic, 4);
     data.magic[4] = 0;
@@ -95,12 +106,7 @@ int cls_ros2_egress_prog(struct __sk_buff *skb) {
     off = find_rtps_data_submsg(skb, &msg_id);
 
     if (msg_id == RTPS_SUBMSG_ID_DATA) {
-        bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_GUIDPREFIX_OFF, data.guid, 12);
-        bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_HLEN + off + RTPS_DATA_WRITERID_OFF, &data.guid[12], 4);
-        bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_HLEN + off + RTPS_DATA_SEQNUM_OFF, &high, 4);
-        bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_HLEN + off + RTPS_DATA_SEQNUM_OFF + 4, &low, 4);
-        data.seqnum = (((u64) high) << 32u) | low;
-
+        get_guid_seqnum(skb, off, data.guid, &data.seqnum);
         data.ts = bpf_ktime_get_ns();
         cls_egress.perf_submit(skb, &data, sizeof(struct cls_egress_data_t));
     }
@@ -112,8 +118,6 @@ int cls_ros2_ingress_prog(struct __sk_buff *skb) {
     char *magic = data.magic;
     u8 msg_id = 0;
     int off = 0;
-    s32 high;
-    u32 low;
 
     bpf_skb_load_bytes(skb, RTPS_OFF, &data.magic, 4);
     data.magic[4] = 0;
@@ -124,12 +128,7 @@ int cls_ros2_ingress_prog(struct __sk_buff *skb) {
     off = find_rtps_data_submsg(skb, &msg_id);
 
     if (msg_id == RTPS_SUBMSG_ID_DATA) {
-        bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_GUIDPREFIX_OFF, data.guid, 12);
-        bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_HLEN + off + RTPS_DATA_WRITERID_OFF, &data.guid[12], 4);
-        bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_HLEN + off + RTPS_DATA_SEQNUM_OFF, &high, 4);
-        bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_HLEN + off + RTPS_DATA_SEQNUM_OFF + 4, &low, 4);
-        data.seqnum = (((u64) high) << 32u) | low;
-
+        get_guid_seqnum(skb, off, data.guid, &data.seqnum);
         data.ts = bpf_ktime_get_ns();
         cls_ingress.perf_submit(skb, &data, sizeof(struct cls_egress_data_t));
     }
