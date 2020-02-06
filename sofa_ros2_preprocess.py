@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import sys
 import pandas as pd
 from pandas import DataFrame as df
 
@@ -77,11 +78,27 @@ def print_all_msgs(res):
             print(msg_log)
             print('')
 
+sys.path.insert(0, '/home/st9540808/Desktop/VS_Code/sofa/bin')
+import sofa_models, sofa_preprocess
+def run(df_send, df_recv, *args):
+    """ Start preprocessing.
+    """
+    res = extract_individual_rosmsg(df_send, df_recv, *args)
+    sofatrace = sofa_models.SOFATrace()
+    sofatrace.name = topic_name + '_ros2_latency'
+    sofatrace.title = topic_name + ' ros2 latency'
+    sofatrace.color = 'Tomato'
+    sofatrace.x_field = 'timestamp'
+    sofatrace.y_field = 'latency'
+    sofatrace.data = pystacks_traces
+
+
 if __name__ == "__main__":
     read_csv = lambda filename: pd.read_csv(filename, dtype={'pid':'Int32', 'seqnum':'Int64'})
     df_send = read_csv('send_log.csv')
-    df_cls_egress = read_csv('cls_bpf_log.csv')
+    df_cls = read_csv('cls_bpf_log.csv')
     df_recv = read_csv('recv_log.csv')
 
-    res = extract_individual_rosmsg(df_send, df_recv, df_cls_egress)
-    print_all_msgs(res)
+    # res = extract_individual_rosmsg(df_send, df_recv, df_cls_egress)
+    # print_all_msgs(res)
+    run(df_send, df_recv, df_cls)
