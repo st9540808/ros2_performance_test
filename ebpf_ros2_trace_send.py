@@ -130,7 +130,7 @@ int rcl_publish_probe(struct pt_regs *ctx, void *publisher, void *ros_message) {
 
 #define OFF_ENDPOINT 8
 #define OFF_M_GUID 16
-int send_probe(struct pt_regs *ctx, void *this) {
+int fastrtps_send_probe(struct pt_regs *ctx, void *this) {
     struct fastrtps_data_t data = {};
     s32 high;
     u32 low;
@@ -149,12 +149,11 @@ int send_probe(struct pt_regs *ctx, void *this) {
     fastrtps.perf_submit(ctx, &data, sizeof(struct fastrtps_data_t));
     return 0;
 }
-int add_data_probe(struct pt_regs *ctx, void *this, void *change) {
+int fastrtps_add_data_probe(struct pt_regs *ctx, void *this, void *change) {
     struct fastrtps_data_t data = {};
     s32 high;
     u32 low;
 
-    data.ts = bpf_ktime_get_ns();
     bpf_probe_read(&data.endpoint, sizeof(void *), (this + OFF_ENDPOINT));
     bpf_probe_read(data.ep_guid, sizeof data.ep_guid, (data.endpoint + OFF_M_GUID));
 
@@ -162,6 +161,7 @@ int add_data_probe(struct pt_regs *ctx, void *this, void *change) {
     if ((data.ep_guid[15] & 0xc0) == 0xc0)
         return 0;
 
+    data.ts = bpf_ktime_get_ns();
     data.pid = bpf_get_current_pid_tgid();
     bpf_get_current_comm(&data.comm, sizeof data.comm);
     strcpy(data.func, "RTPSMessageGroup::add_data");
@@ -198,10 +198,10 @@ class trace_send(multiprocessing.Process):
                         fn_name="rcl_publish_probe")
         b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so.1.8.2",
                         sym="_ZN8eprosima8fastrtps4rtps16RTPSMessageGroup4sendEv",
-                        fn_name="send_probe")
+                        fn_name="fastrtps_send_probe")
         b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so.1.8.2",
                         sym="_ZN8eprosima8fastrtps4rtps16RTPSMessageGroup8add_dataERKNS1_13CacheChange_tERKSt6vectorINS1_6GUID_tESaIS7_EERKNS1_13LocatorList_tEb",
-                        fn_name="add_data_probe")
+                        fn_name="fastrtps_add_data_probe")
 
         # header:  ts        layer  func   comm   pid   topic  pub      guid   seqnum
         fmtstr = '{:<13.5f} {:<10} {:<28} {:<16} {:<8} {:<22}          {:<40} {:<3d}'
