@@ -3,6 +3,7 @@
 from __future__ import print_function
 from bcc import BPF
 from bcc.utils import printb
+import os
 import multiprocessing
 import json
 import sofa_time
@@ -173,6 +174,43 @@ int fastrtps_add_data_probe(struct pt_regs *ctx, void *this, void *change) {
     fastrtps.perf_submit(ctx, &data, sizeof(struct fastrtps_data_t));
     return 0;
 }
+
+BPF_HASH(add_pub_change_hash, u32, void *);
+int fastrtps_add_pub_change_probe(struct pt_regs *ctx, void *this, void *change) {
+    u32 pid;
+    pid = bpf_get_current_pid_tgid();
+    add_pub_change_hash.update(&pid, &change);
+    return 0;
+}
+int fastrtps_add_pub_change_retprobe(struct pt_regs *ctx) {
+    struct fastrtps_data_t data = {};
+    void **change_ptr, *change;
+    s32 high;
+    u32 low;
+
+    data.pid = bpf_get_current_pid_tgid();
+    change_ptr = add_pub_change_hash.lookup(&data.pid);
+    if (!change_ptr)
+        return 0;
+
+    change = *change_ptr;
+    data.ts = bpf_ktime_get_ns();
+    //data.pid = bpf_get_current_pid_tgid();
+    bpf_get_current_comm(&data.comm, sizeof data.comm);
+    strcpy(data.func, "add_pub_change");
+
+    // read sequence number
+    bpf_probe_read(&high, 4, (change + OFF_SEQNUM));
+    bpf_probe_read(&low, 4, (change + OFF_SEQNUM + 4));
+    data.seqnum = (((u64) high) << 32u) | low;
+
+    // read guid
+    // (although we read from the field writerGUID, we will still store it in ep_guid)
+    bpf_probe_read(data.ep_guid, 16, (change + OFF_WRITERGUID));
+
+    fastrtps.perf_submit(ctx, &data, sizeof(struct fastrtps_data_t));
+    return 0;
+}
 """
 
 class trace_send(multiprocessing.Process):
@@ -180,7 +218,8 @@ class trace_send(multiprocessing.Process):
                            data_keys=['ts', 'comm', 'pid', 'topic_name', 'mp_writer', 'rmw_guid'],
                            remap={'mp_writer':'publisher', 'rmw_guid':'guid'})
     def print_rcl(self, *args):
-        pass
+        d = args[0]
+        d['func'] = 'rcl_publish'
 
     @perf_callback_factory(event_name='fastrtps',
                            data_keys=['func', 'ts', 'comm', 'pid', 'endpoint', 'ep_guid', 'seqnum'],
@@ -190,18 +229,28 @@ class trace_send(multiprocessing.Process):
         if d['seqnum'] == 0:
             d.pop('seqnum')
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.set = kwargs['args'][0] if 'args' in kwargs else multiprocessing.Event()
+
     def run(self):
         # load BPF program
         self.b = b = BPF(text=prog)
         b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/build/rcl/librcl.so",
                         sym="rcl_publish",
                         fn_name="rcl_publish_probe")
-        b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so.1.8.2",
-                        sym="_ZN8eprosima8fastrtps4rtps16RTPSMessageGroup4sendEv",
-                        fn_name="fastrtps_send_probe")
-        b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so.1.8.2",
-                        sym="_ZN8eprosima8fastrtps4rtps16RTPSMessageGroup8add_dataERKNS1_13CacheChange_tERKSt6vectorINS1_6GUID_tESaIS7_EERKNS1_13LocatorList_tEb",
-                        fn_name="fastrtps_add_data_probe")
+        # b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so.1.8.2",
+        #                 sym="_ZN8eprosima8fastrtps4rtps16RTPSMessageGroup4sendEv",
+        #                 fn_name="fastrtps_send_probe")
+        # b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so.1.8.2",
+        #                 sym="_ZN8eprosima8fastrtps4rtps16RTPSMessageGroup8add_dataERKNS1_13CacheChange_tERKSt6vectorINS1_6GUID_tESaIS7_EERKNS1_13LocatorList_tEb",
+        #                 fn_name="fastrtps_add_data_probe")
+        b.attach_uprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so'),
+                        sym="_ZN8eprosima8fastrtps16PublisherHistory14add_pub_changeEPNS0_4rtps13CacheChange_tERNS2_11WriteParamsERSt11unique_lockISt21recursive_timed_mutexENSt6chrono10time_pointINSB_3_V212steady_clockENSB_8durationIlSt5ratioILl1ELl1000000000EEEEEE",
+                        fn_name="fastrtps_add_pub_change_probe")
+        b.attach_uretprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so'),
+                           sym="_ZN8eprosima8fastrtps16PublisherHistory14add_pub_changeEPNS0_4rtps13CacheChange_tERNS2_11WriteParamsERSt11unique_lockISt21recursive_timed_mutexENSt6chrono10time_pointINSB_3_V212steady_clockENSB_8durationIlSt5ratioILl1ELl1000000000EEEEEE",
+                           fn_name="fastrtps_add_pub_change_retprobe")
 
         # header:  ts        layer  func   comm   pid   topic  pub      guid   seqnum
         fmtstr = '{:<13.5f} {:<10} {:<28} {:<16} {:<8} {:<22}          {:<40} {:<3d}'
@@ -212,9 +261,9 @@ class trace_send(multiprocessing.Process):
         # loop with callback to print_event
         b["rcl"].open_perf_buffer(self.print_rcl)
         b["fastrtps"].open_perf_buffer(self.print_fastrtps)
-        while 1:
+        while not self.set.is_set():
             try:
-                b.perf_buffer_poll()
+                b.perf_buffer_poll(timeout=1000)
             except KeyboardInterrupt:
                 break
         self.log.close()

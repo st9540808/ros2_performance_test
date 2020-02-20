@@ -1,9 +1,14 @@
 log*
+*.csv
+*.pyc
+*.ipynb
+.*
 build/
 install/
 log/
 docker_ws/
 sofalog/
+explog/
 uftrace.data/
 uftrace.data.old/
 .vscode/

@@ -89,7 +89,7 @@ int rmw_take_with_info_retprobe(struct pt_regs *ctx) {
         data.subscriber = metadata->subscriber;
 
         rmw.perf_submit(ctx, &data, sizeof(struct rmw_data_t));
-        message_info_hash.delete(&pid);
+        //message_info_hash.delete(&pid);
     }
     return 0;
 }
@@ -160,6 +160,10 @@ class trace_recv(multiprocessing.Process):
     def print_fastrtps(self, *args):
         pass
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.set = kwargs['args'][0] if 'args' in kwargs else multiprocessing.Event()
+
     def run(self):
         # load BPF program
         self.b = b = BPF(text=prog)
@@ -182,9 +186,9 @@ class trace_recv(multiprocessing.Process):
         # loop with callback to print_event
         b["rmw"].open_perf_buffer(self.print_rmw)
         b["fastrtps"].open_perf_buffer(self.print_fastrtps)
-        while 1:
+        while not self.set.is_set():
             try:
-                b.perf_buffer_poll()
+                b.perf_buffer_poll(timeout=1000)
             except KeyboardInterrupt:
                 break
         self.log.close()
