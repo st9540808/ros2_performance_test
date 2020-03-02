@@ -97,15 +97,6 @@ def print_all_msgs(res):
             print('')
 
 def ros_msgs_trace_read(items, cfg):
-    # ts	layer	func	comm	pid	topic_name	guid	seqnum	subscriber
-    # 1	321114.175064	rcl	NaN	talker	4109.0	/chatter	1.f.ec.5f.d.10.0.0.1.0.0.0|0.0.10.3	1.0	NaN
-    # 2	321114.175964	fastrtps	RTPSMessageGroup::add_data	talker	4115.0	NaN	1.f.ec.5f.d.10.0.0.1.0.0.0|0.0.10.3	1.0	NaN
-    # 3	321114.176010	fastrtps	RTPSMessageGroup::send	talker	4115.0	NaN	1.f.ec.5f.d.10.0.0.1.0.0.0|0.0.10.3	1.0	NaN
-    # 4	321114.176166	fastrtps	RTPSMessageGroup::send	talker	4115.0	NaN	1.f.ec.5f.d.10.0.0.1.0.0.0|0.0.10.3	1.0	NaN
-    # 61	321114.176288	cls_egress	NaN	NaN	NaN	NaN	1.f.ec.5f.d.10.0.0.1.0.0.0|0.0.10.3	1.0	NaN
-    # 62	321114.176329	cls_ingress	NaN	NaN	NaN	NaN	1.f.ec.5f.d.10.0.0.1.0.0.0|0.0.10.3	1.0	NaN
-    # 41	321114.177028	fastrtps	add_received_change	listener	4125.0	NaN	1.f.ec.5f.d.10.0.0.1.0.0.0|0.0.10.3	1.0	9.427450e+13
-    # 42	321114.178160	rmw	rmw_take_with_info exit	listener	4120.0	NaN	1.f.ec.5f.d.10.0.0.1.0.0.0|0.0.10.3	1.0	9.427450e+13
     sofa_fieldnames = [
         "timestamp",  # 0
         "event",      # 1
