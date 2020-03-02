@@ -24,7 +24,7 @@ struct rcl_data_t {
     void *publisher;
     void *ros_message;
 
-    void *rmw_data;
+    //void *rmw_data;
     void *rmw_publisher_;
     u8    rmw_guid[16];
     //char  rmw_tsid[36]; //typesupport_identifier_
@@ -81,7 +81,7 @@ int publish_probe(struct pt_regs *ctx, void *publisher) {
 #define OFF_MP_WRITER 16
 int rcl_publish_probe(struct pt_regs *ctx, void *publisher, void *ros_message) {
     struct rcl_data_t data = {};
-    char *impl, *rmw_handle;
+    char *impl, *rmw_data, *rmw_handle;
     void *ptr;
 
     data.ts = bpf_ktime_get_ns();
@@ -105,13 +105,13 @@ int rcl_publish_probe(struct pt_regs *ctx, void *publisher, void *ros_message) {
     bpf_probe_read_str(data.topic_name, sizeof data.topic_name, ptr);
 
     bpf_probe_read(&ptr, sizeof(void *), &((rmw_publisher_t *) rmw_handle)->data);
-    data.rmw_data = ptr;
+    rmw_data = ptr;
 
     switch (data.implementation[4]) {
     case 'f': // rmw_fastrtps_cpp
         // `CustomPublisherInfo`, get information pointed by data in rmw_publisher
-        bpf_probe_read(&data.rmw_publisher_, sizeof(void *), (data.rmw_data + OFF_RMW_PUBLISHER_));
-        bpf_probe_read(data.rmw_guid, sizeof data.rmw_guid,  (data.rmw_data + OFF_RMW_GUID));
+        bpf_probe_read(&data.rmw_publisher_, sizeof(void *), (rmw_data + OFF_RMW_PUBLISHER_));
+        bpf_probe_read(data.rmw_guid, sizeof data.rmw_guid,  (rmw_data + OFF_RMW_GUID));
 
         // `eprosima::fastrtps::PublisherImpl`
         bpf_probe_read(&data.mp_impl, sizeof(void *), (data.rmw_publisher_ + OFF_MP_IMPL));
@@ -236,7 +236,7 @@ class trace_send(multiprocessing.Process):
     def run(self):
         # load BPF program
         self.b = b = BPF(text=prog)
-        b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/build/rcl/librcl.so",
+        b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/librcl.so",
                         sym="rcl_publish",
                         fn_name="rcl_publish_probe")
         # b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so.1.8.2",
@@ -245,16 +245,16 @@ class trace_send(multiprocessing.Process):
         # b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so.1.8.2",
         #                 sym="_ZN8eprosima8fastrtps4rtps16RTPSMessageGroup8add_dataERKNS1_13CacheChange_tERKSt6vectorINS1_6GUID_tESaIS7_EERKNS1_13LocatorList_tEb",
         #                 fn_name="fastrtps_add_data_probe")
-        b.attach_uprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so'),
+        b.attach_uprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/libfastrtps.so'),
                         sym="_ZN8eprosima8fastrtps16PublisherHistory14add_pub_changeEPNS0_4rtps13CacheChange_tERNS2_11WriteParamsERSt11unique_lockISt21recursive_timed_mutexENSt6chrono10time_pointINSB_3_V212steady_clockENSB_8durationIlSt5ratioILl1ELl1000000000EEEEEE",
                         fn_name="fastrtps_add_pub_change_probe")
-        b.attach_uretprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so'),
+        b.attach_uretprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/libfastrtps.so'),
                            sym="_ZN8eprosima8fastrtps16PublisherHistory14add_pub_changeEPNS0_4rtps13CacheChange_tERNS2_11WriteParamsERSt11unique_lockISt21recursive_timed_mutexENSt6chrono10time_pointINSB_3_V212steady_clockENSB_8durationIlSt5ratioILl1ELl1000000000EEEEEE",
                            fn_name="fastrtps_add_pub_change_retprobe")
 
         # header:  ts        layer  func   comm   pid   topic  pub      guid   seqnum
-        fmtstr = '{:<13.5f} {:<10} {:<28} {:<16} {:<8} {:<22}          {:<40} {:<3d}'
-        fields = ['ts', 'layer', 'func', 'comm', 'pid', 'topic_name', 'guid', 'seqnum']
+        fmtstr = '{:<13.5f} {:<10} {:<28} {:<16} {:<8} {:<22}  {:<#18x}  {:<40} {:<3d}'
+        fields = ['ts', 'layer', 'func', 'comm', 'pid', 'topic_name', 'publisher', 'guid', 'seqnum']
         self.log = sofa_ros2_utilities.Log(fields=fields, fmtstr=fmtstr,
                                            cvsfilename='send_log.csv', print_raw=self.is_alive())
 
