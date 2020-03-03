@@ -78,8 +78,7 @@ int rmw_take_with_info_retprobe(struct pt_regs *ctx) {
     bpf_get_current_comm(&data.comm, sizeof data.comm);
     strcpy(data.func, "rmw_take_with_info exit");
 
-    pid = bpf_get_current_pid_tgid();
-    metadata = message_info_hash.lookup(&pid);
+    metadata = message_info_hash.lookup(&data.pid);
     if (metadata) {
         // get guid
         message_info = metadata->msginfo;
@@ -89,7 +88,7 @@ int rmw_take_with_info_retprobe(struct pt_regs *ctx) {
         data.subscriber = metadata->subscriber;
 
         rmw.perf_submit(ctx, &data, sizeof(struct rmw_data_t));
-        //message_info_hash.delete(&pid);
+        //message_info_hash.delete(&data.pid);
     }
     return 0;
 }
