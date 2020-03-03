@@ -3,6 +3,7 @@
 from __future__ import print_function
 from bcc import BPF
 from bcc.utils import printb
+import os
 import multiprocessing
 import json
 import sofa_time
@@ -64,8 +65,20 @@ typedef struct rmw_take_metadata_t {
     rmw_message_info_t *msginfo;
     void *subscriber;
 } rmw_take_metadata_t;
-BPF_HASH(message_info_hash, u32, rmw_take_metadata_t);
 
+int rmw_wait_retprobe(struct pt_regs *ctx) {
+    struct rmw_data_t data = {};
+
+    data.ts = bpf_ktime_get_ns();
+    data.pid = bpf_get_current_pid_tgid();
+    bpf_get_current_comm(&data.comm, sizeof data.comm);
+    strcpy(data.func, "rmw_wait exit");
+
+    rmw.perf_submit(ctx, &data, sizeof(struct rmw_data_t));
+    return 0;
+}
+
+BPF_HASH(message_info_hash, u32, rmw_take_metadata_t);
 #define subscriber__OFF 8
 int rmw_take_with_info_retprobe(struct pt_regs *ctx) {
     struct rmw_data_t data = {};
@@ -166,13 +179,16 @@ class trace_recv(multiprocessing.Process):
     def run(self):
         # load BPF program
         self.b = b = BPF(text=prog)
-        b.attach_uretprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/rmw_implementation/lib/librmw_implementation.so",
+        b.attach_uretprobe(name="/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/librmw_implementation.so",
+                           sym="rmw_wait",
+                           fn_name="rmw_wait_retprobe")
+        b.attach_uretprobe(name="/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/librmw_implementation.so",
                            sym="rmw_take_with_info",
                            fn_name="rmw_take_with_info_retprobe")
-        b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/rmw_implementation/lib/librmw_implementation.so",
+        b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/librmw_implementation.so",
                         sym="rmw_take_with_info",
                         fn_name="rmw_take_with_info_probe")
-        b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-build_from_source/install/fastrtps/lib/libfastrtps.so.1.8.2",
+        b.attach_uprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/libfastrtps.so'),
                         sym="_ZN8eprosima8fastrtps17SubscriberHistory19add_received_changeEPNS0_4rtps13CacheChange_tE",
                         fn_name="add_received_change_probe")
 
