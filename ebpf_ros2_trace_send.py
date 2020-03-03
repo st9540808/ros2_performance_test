@@ -211,6 +211,42 @@ int fastrtps_add_pub_change_retprobe(struct pt_regs *ctx) {
     fastrtps.perf_submit(ctx, &data, sizeof(struct fastrtps_data_t));
     return 0;
 }
+
+BPF_HASH(RTPSMessageGroup_hash, u32, void *);
+int fastrtps_RTPSMessageGroup_destructor_probe(struct pt_regs *ctx, void *this) {
+    struct fastrtps_data_t data = {};
+
+    data.ts = bpf_ktime_get_ns();
+    data.pid = bpf_get_current_pid_tgid();
+    strcpy(data.func, "~RTPSMessageGroup");
+
+    // store this pointer
+    RTPSMessageGroup_hash.update(&data.pid, &this);
+
+    // get endpoint memory address
+    bpf_probe_read(&data.endpoint, sizeof(void *), (this + OFF_ENDPOINT));
+    fastrtps.perf_submit(ctx, &data, sizeof(struct fastrtps_data_t));
+    return 0;
+}
+int fastrtps_RTPSMessageGroup_destructor_retprobe(struct pt_regs *ctx) {
+    struct fastrtps_data_t data = {};
+    void **this_ptr, *this;
+
+    data.ts = bpf_ktime_get_ns();
+    data.pid = bpf_get_current_pid_tgid();
+    strcpy(data.func, "~RTPSMessageGroup exit");
+
+    // get this pointer
+    this_ptr = RTPSMessageGroup_hash.lookup(&data.pid);
+    if (!this_ptr)
+        return 0;
+    this = *this_ptr;
+
+    // get endpoint memory address
+    bpf_probe_read(&data.endpoint, sizeof(void *), (this + OFF_ENDPOINT));
+    fastrtps.perf_submit(ctx, &data, sizeof(struct fastrtps_data_t));
+    return 0;
+}
 """
 
 class trace_send(multiprocessing.Process):
@@ -251,10 +287,16 @@ class trace_send(multiprocessing.Process):
         b.attach_uretprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/libfastrtps.so'),
                            sym="_ZN8eprosima8fastrtps16PublisherHistory14add_pub_changeEPNS0_4rtps13CacheChange_tERNS2_11WriteParamsERSt11unique_lockISt21recursive_timed_mutexENSt6chrono10time_pointINSB_3_V212steady_clockENSB_8durationIlSt5ratioILl1ELl1000000000EEEEEE",
                            fn_name="fastrtps_add_pub_change_retprobe")
+        b.attach_uprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/libfastrtps.so'),
+                        sym="_ZN8eprosima8fastrtps4rtps16RTPSMessageGroupD1Ev",
+                        fn_name="fastrtps_RTPSMessageGroup_destructor_probe")
+        b.attach_uretprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/libfastrtps.so'),
+                           sym="_ZN8eprosima8fastrtps4rtps16RTPSMessageGroupD1Ev",
+                           fn_name="fastrtps_RTPSMessageGroup_destructor_retprobe")
 
         # header:  ts        layer  func   comm   pid   topic  pub      guid   seqnum
-        fmtstr = '{:<13.5f} {:<10} {:<28} {:<16} {:<8} {:<22}  {:<#18x}  {:<40} {:<3d}'
-        fields = ['ts', 'layer', 'func', 'comm', 'pid', 'topic_name', 'publisher', 'guid', 'seqnum']
+        fmtstr = '{:<10} {:<13.5f} {:<28} {:<16} {:<8} {:<22}  {:<#18x}  {:<40} {:<3d}'
+        fields = ['layer', 'ts', 'func', 'comm', 'pid', 'topic_name', 'publisher', 'guid', 'seqnum']
         self.log = sofa_ros2_utilities.Log(fields=fields, fmtstr=fmtstr,
                                            cvsfilename='send_log.csv', print_raw=self.is_alive())
 
