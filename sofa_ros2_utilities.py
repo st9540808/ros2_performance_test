@@ -84,6 +84,13 @@ class Log:
                 data[field] = ''
                 fieldfmts[field] = self.clear_specifiers(fieldfmts[field])
 
+        # don't print empty guid
+        try:
+            if data['guid'] == '0.0.0.0.0.0.0.0.0.0.0.0|0.0.0.0':
+                data['guid'] = ''
+        except KeyError as e:
+            pass
+
         fmtstr = ' '.join(fieldfmts[field] for field in self.fields)
         interested_data = [data[field] for field in self.fields]
         print(fmtstr.format(*interested_data))
@@ -97,8 +104,15 @@ class Log:
             for oldkey, newkey in remap.items():
                 data[newkey] = data.pop(oldkey)
         interested_data = {k:data[k] for k in self.fields if k in data.keys()}
-        print(interested_data)
 
+        # don't print empty guid
+        try:
+            if interested_data['guid'] == '0.0.0.0.0.0.0.0.0.0.0.0|0.0.0.0':
+                interested_data['guid'] = ''
+        except KeyError as e:
+            pass
+
+        print(interested_data)
         if hasattr(self, 'f'):
             self.cvslog.writerow(interested_data)
 
