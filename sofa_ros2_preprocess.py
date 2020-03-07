@@ -11,7 +11,7 @@ import multiprocessing as mp
 sys.path.insert(0, '/home/st9540808/Desktop/VS_Code/sofa/bin')
 import sofa_models, sofa_preprocess
 
-colors = ['DeepPink']
+colors = ['DeepPink', 'RebeccaPurple', 'RoyalBlue', 'MediumSlateBlue']
 color = itertools.cycle(colors)
 
 def extract_individual_rosmsg(df_send, df_recv, *df_others):
@@ -48,11 +48,28 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
         df = all_publishers_log[guid]
         df_send_partial = all_publishers_log[guid].copy()
         add_data_calls = df[~pd.isna(df['seqnum'])] # get all non-NaN seqnums in log
+        pubaddr, = pd.unique(df['publisher']).dropna()
+        all_RTPSMsg_idx = ((df_send['func'] == '~RTPSMessageGroup') & (df_send['publisher'] == pubaddr))
+        all_RTPSMsgret_idx = ((df_send['func'] == '~RTPSMessageGroup exit') & (df_send['publisher'] == pubaddr))
         for idx, add_data_call in add_data_calls.iterrows():
             ts = add_data_call['ts']
 
             rcl_idx = df.loc[(df['ts'] < ts) & (df['layer'] == 'rcl')]['ts'].idxmax()
             df_send_partial.loc[rcl_idx, 'seqnum'] = add_data_call.loc['seqnum']
+
+            # For grouping RTPSMessageGroup function
+            try:
+                RTPSMsg_idx = df_send.loc[(df_send['ts'] > ts) & all_RTPSMsg_idx]['ts'].idxmin()
+                df_send_partial.loc[RTPSMsg_idx] = df_send.loc[RTPSMsg_idx]
+                df_send_partial.loc[RTPSMsg_idx, 'seqnum'] = add_data_call.loc['seqnum']
+                df_send_partial.loc[RTPSMsg_idx, 'guid'] = guid
+
+                RTPSMsgret_idx = df_send.loc[(df_send['ts'] > ts) & all_RTPSMsgret_idx]['ts'].idxmin()
+                df_send_partial.loc[RTPSMsgret_idx] = df_send.loc[RTPSMsgret_idx]
+                df_send_partial.loc[RTPSMsgret_idx, 'seqnum'] = add_data_call.loc['seqnum']
+                df_send_partial.loc[RTPSMsgret_idx, 'guid'] = guid
+            except ValueError as e:
+                pass
 
             # send_idx = df.loc[(df['ts'] > ts) & (df['layer'] == 'fastrtps')]['ts'].idxmin()
             # df_send_partial.loc[send_idx, 'seqnum'] = add_data_call.loc['seqnum']
@@ -68,10 +85,23 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
             ts = add_recvchange_call['ts']
             subaddr = add_recvchange_call['subscriber']
 
-            rmw_take_idx = df.loc[(df['ts'] > ts) &
-                                  (df['layer'] == 'rmw') &
-                                  (df['subscriber'] == subaddr)]['ts'].idxmin()
-            df_recv_partial.loc[rmw_take_idx, 'seqnum'] = add_recvchange_call.loc['seqnum']
+            # Consider missing `rmw_take_with_info exit` here
+            try:
+                rmw_take_idx = df.loc[(df['ts'] > ts) &
+                                      (df['func'] == 'rmw_take_with_info exit') &
+                                      (df['subscriber'] == subaddr)]['ts'].idxmin()
+                df_recv_partial.loc[rmw_take_idx, 'seqnum'] = add_recvchange_call.loc['seqnum']
+
+                # Group rmw_wait
+                pid = df_recv_partial.loc[rmw_take_idx, 'pid']
+                rmw_wait_idx = df_recv[(df_recv['ts'] > ts) &
+                                       (df_recv['pid'] == pid) &
+                                       (df_recv['func'] == 'rmw_wait exit')]['ts'].idxmin()
+                df_recv_partial.loc[rmw_wait_idx] = df_recv.loc[rmw_wait_idx]
+                df_recv_partial.loc[rmw_wait_idx, 'seqnum'] = add_recvchange_call.loc['seqnum']
+                df_recv_partial.loc[rmw_wait_idx, 'guid'] = guid
+            except ValueError as e:
+                pass
 
         df_merged = df_send_partial.append(df_recv_partial, ignore_index=True, sort=False)
 
@@ -116,26 +146,32 @@ def ros_msgs_trace_read(items, cfg):
     traces = []
     topic_name, all_msgs_log = items
     for msg_id, msg_log in all_msgs_log.items():
-        trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
-        start = msg_log.iloc[0]
-        end = msg_log.iloc[-1]
+        gb_sub = msg_log.groupby(['subscriber']) # How many subscribers receviced this ros message?
 
-        time = start['ts']
-        if cfg is not None and not cfg.absolute_timestamp:
-            time = start['ts'] - cfg.time_base
-        trace['timestamp'] = time
-        trace['duration'] = (end['ts'] - start['ts']) * 1e3 # ms
-        trace['name'] = "[%s] %s -> [%s] %s <br>Topic Name: %s" % \
-                        (start['layer'], start['func'], end['layer'], end['func'], start['topic_name'])
-        trace['unit'] = 'ms'
-        traces.append(trace)
+        for sub_addr, sub_log in gb_sub:
+            trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+            start = msg_log.iloc[0]
+            end = sub_log.iloc[-1]
+
+            time = start['ts']
+            if cfg is not None and not cfg.absolute_timestamp:
+                time = start['ts'] - cfg.time_base
+            trace['timestamp'] = time
+            trace['duration'] = (end['ts'] - start['ts']) * 1e3 # ms
+            trace['name'] = "[%s] %s -> [%s] %s <br>Topic Name: %s<br>Transmission: %s -> %s" % \
+                            (start['layer'], start['func'], end['layer'], end['func'],
+                             start['topic_name'],
+                             start['comm'], end['comm'])
+            trace['unit'] = 'ms'
+            traces.append(trace)
     traces = pd.DataFrame(traces)
     return traces
 
 def run(cfg):
     """ Start preprocessing. """
     # Read all log files generated by ebpf_ros2_*
-    read_csv = functools.partial(pd.read_csv, dtype={'pid':'Int32', 'seqnum':'Int64'})
+    read_csv = functools.partial(pd.read_csv, dtype={
+        'pid':'Int32', 'seqnum':'Int64', 'subscriber':'Int64', 'publisher':'Int64'})
     cvs_files_others = ['cls_bpf_log.csv']
     df_send = read_csv('send_log.csv')
     df_recv = read_csv('recv_log.csv')
@@ -157,8 +193,8 @@ def run(cfg):
     sofatrace.color = next(color)
     sofatrace.x_field = 'timestamp'
     sofatrace.y_field = 'duration'
-    sofatrace.data = res[0] # TODO: append all
-    return sofatrace
+    sofatrace.data = pd.concat(res) # TODO: append all
+    return [sofatrace]
 
 if __name__ == "__main__":
     # read_csv = functools.partial(pd.read_csv, dtype={'pid':'Int32', 'seqnum':'Int64'})
@@ -168,4 +204,6 @@ if __name__ == "__main__":
     # res = extract_individual_rosmsg(df_send, df_recv, df_cls)
     # print_all_msgs(res)
 
-    run(None)
+    res = run(None)
+    for r in res:
+        print(r.data)
