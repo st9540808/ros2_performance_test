@@ -116,11 +116,19 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
             df_other = other_log[guid]
             df_merged = df_merged.append(df_other, ignore_index=True, sort=False)
 
+        # Avoid `TypeError: boolean value of NA is ambiguous` when calling groupby()
+        df_merged['subscriber'] = df_merged['subscriber'].fillna(np.nan)
+        df_merged['guid'] = df_merged['guid'].fillna(np.nan)
+        df_merged['seqnum'] = df_merged['seqnum'].fillna(np.nan)
         df_merged.sort_values(by=['ts'], inplace=True)
         gb_merged = df_merged.groupby(['guid', 'seqnum'])
 
         ros_msgs = {msg_id:log for msg_id, log in gb_merged} # msg_id: (guid, seqnum)
-        topic_name = next(iter(ros_msgs.items()))[1]['topic_name'].any()
+        # get topic name from log
+        topic_name = df_merged['topic_name'].dropna().unique()
+        if len(topic_name) > 1:
+            raise Exception("More than one topic in a log file")
+        topic_name = topic_name[0]
         res[topic_name] = ros_msgs
     return res
 
@@ -152,7 +160,8 @@ def ros_msgs_trace_read(items, cfg):
     traces = []
     topic_name, all_msgs_log = items
     for msg_id, msg_log in all_msgs_log.items():
-        gb_sub = msg_log.groupby(['subscriber']) # How many subscribers receviced this ros message?
+        # msg_log['subscriber'] = msg_log['subscriber'].apply(lambda x: np.nan if x is pd.NA else x)
+        gb_sub = msg_log.groupby('subscriber') # How many subscribers receviced this ros message?
 
         for sub_addr, sub_log in gb_sub:
             trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
