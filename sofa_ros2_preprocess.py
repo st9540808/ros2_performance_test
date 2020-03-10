@@ -49,8 +49,10 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
         df_send_partial = all_publishers_log[guid].copy()
         add_data_calls = df[~pd.isna(df['seqnum'])] # get all non-NaN seqnums in log
         pubaddr, = pd.unique(df['publisher']).dropna()
+
         all_RTPSMsg_idx = ((df_send['func'] == '~RTPSMessageGroup') & (df_send['publisher'] == pubaddr))
         all_RTPSMsgret_idx = ((df_send['func'] == '~RTPSMessageGroup exit') & (df_send['publisher'] == pubaddr))
+        modified_rows = []
         for idx, add_data_call in add_data_calls.iterrows():
             ts = add_data_call['ts']
 
@@ -60,49 +62,53 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
             # For grouping RTPSMessageGroup function
             try:
                 RTPSMsg_idx = df_send.loc[(df_send['ts'] > ts) & all_RTPSMsg_idx]['ts'].idxmin()
-                df_send_partial.loc[RTPSMsg_idx] = df_send.loc[RTPSMsg_idx]
-                df_send_partial.loc[RTPSMsg_idx, 'seqnum'] = add_data_call.loc['seqnum']
-                df_send_partial.loc[RTPSMsg_idx, 'guid'] = guid
+                modified_row = df_send.loc[RTPSMsg_idx]
+                modified_row.at['seqnum'] = add_data_call.loc['seqnum']
+                modified_row.at['guid'] = guid
+                modified_rows.append(modified_row)
 
                 RTPSMsgret_idx = df_send.loc[(df_send['ts'] > ts) & all_RTPSMsgret_idx]['ts'].idxmin()
-                df_send_partial.loc[RTPSMsgret_idx] = df_send.loc[RTPSMsgret_idx]
-                df_send_partial.loc[RTPSMsgret_idx, 'seqnum'] = add_data_call.loc['seqnum']
-                df_send_partial.loc[RTPSMsgret_idx, 'guid'] = guid
+                modified_row = df_send.loc[RTPSMsgret_idx]
+                modified_row.at['seqnum'] = add_data_call.loc['seqnum']
+                modified_row.at['guid'] = guid
+                modified_rows.append(modified_row)
             except ValueError as e:
                 pass
-
-            # send_idx = df.loc[(df['ts'] > ts) & (df['layer'] == 'fastrtps')]['ts'].idxmin()
-            # df_send_partial.loc[send_idx, 'seqnum'] = add_data_call.loc['seqnum']
-
-            # send_idx2 = df.loc[(df['ts'] > df.loc[send_idx, 'ts']) & (df['layer'] == 'fastrtps')]['ts'].idxmin()
-            # df_send_partial.loc[send_idx2, 'seqnum'] = add_data_call.loc['seqnum']
+        df_send_partial = pd.concat([df_send_partial, pd.DataFrame(modified_rows)])
 
         # get a subscrption from log
         df = all_subscriptions_log[guid]
         df_recv_partial = all_subscriptions_log[guid].copy()
         add_recvchange_calls = df[~pd.isna(df['seqnum'])] # get all not nan seqnums in log
+
+        all_sub = pd.unique(df['subscriber']) # How many subscribers subscribe to this topic?
+        subs_map = {sub: (df['subscriber'] == sub) &
+                         (df['func'] == "rmw_take_with_info exit") for sub in all_sub}
+        all_pid = pd.unique(df_recv['pid'])
+        pid_maps = {pid: (df_recv['pid'] == pid) &
+                         (df_recv['func'] == "rmw_wait exit") for pid in all_pid}
+        modified_rows = []
         for idx, add_recvchange_call in add_recvchange_calls.iterrows():
             ts = add_recvchange_call['ts']
-            subaddr = add_recvchange_call['subscriber']
+            subaddr = add_recvchange_call.at['subscriber']
 
             # Consider missing `rmw_take_with_info exit` here
             try:
-                rmw_take_idx = df.loc[(df['ts'] > ts) &
-                                      (df['func'] == 'rmw_take_with_info exit') &
-                                      (df['subscriber'] == subaddr)]['ts'].idxmin()
-                df_recv_partial.loc[rmw_take_idx, 'seqnum'] = add_recvchange_call.loc['seqnum']
+                rmw_take_idx = df.loc[(df['ts'] > ts) & subs_map[subaddr]]['ts'].idxmin()
+                df_recv_partial.at[rmw_take_idx, 'seqnum'] = add_recvchange_call.loc['seqnum']
 
                 # Group rmw_wait
-                pid = df_recv_partial.loc[rmw_take_idx, 'pid']
-                rmw_wait_idx = df_recv[(df_recv['ts'] > ts) &
-                                       (df_recv['pid'] == pid) &
-                                       (df_recv['func'] == 'rmw_wait exit')]['ts'].idxmin()
-                df_recv_partial.loc[rmw_wait_idx] = df_recv.loc[rmw_wait_idx]
-                df_recv_partial.loc[rmw_wait_idx, 'seqnum'] = add_recvchange_call.loc['seqnum']
-                df_recv_partial.loc[rmw_wait_idx, 'guid'] = guid
+                pid = df_recv_partial.at[rmw_take_idx, 'pid']
+                rmw_wait_idx = df_recv.loc[(df_recv['ts'] > ts) & pid_maps[pid]]['ts'].idxmin()
+                modified_row = df_recv.loc[rmw_wait_idx]
+                modified_row.at['seqnum'] = add_recvchange_call.at['seqnum']
+                modified_row.at['guid'] = guid
+                modified_rows.append(modified_row)
             except ValueError as e:
                 pass
+        df_recv_partial = pd.concat([df_recv_partial, pd.DataFrame(modified_rows)])
 
+        # Merge all modified dataframes
         df_merged = df_send_partial.append(df_recv_partial, ignore_index=True, sort=False)
 
         # handle other log files
