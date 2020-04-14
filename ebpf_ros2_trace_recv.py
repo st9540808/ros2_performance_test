@@ -26,7 +26,8 @@ struct rmw_data_t {
     u64 ts;
     u32 pid;
     char comm[TASK_COMM_LEN];
-    char func[28];
+    char func[32];
+    char implementation[24];
 
     void *subscriber;
     u8 guid[16];
@@ -63,7 +64,8 @@ typedef struct rmw_subscription_t {
 
 typedef struct rmw_take_metadata_t {
     rmw_message_info_t *msginfo;
-    void *subscriber;
+    void *subscriber; // for implementation specific data type
+    rmw_subscription_t *subscription;
 } rmw_take_metadata_t;
 
 int rmw_wait_retprobe(struct pt_regs *ctx) {
@@ -83,7 +85,9 @@ BPF_HASH(message_info_hash, u32, rmw_take_metadata_t);
 int rmw_take_with_info_retprobe(struct pt_regs *ctx) {
     struct rmw_data_t data = {};
     rmw_take_metadata_t *metadata;
-    void *message_info;
+    rmw_message_info_t *message_info;
+    rmw_subscription_t *subscription;
+    char *ptr;
     u32 pid;
 
     data.ts = bpf_ktime_get_ns();
@@ -92,38 +96,53 @@ int rmw_take_with_info_retprobe(struct pt_regs *ctx) {
     strcpy(data.func, "rmw_take_with_info exit");
 
     metadata = message_info_hash.lookup(&data.pid);
-    if (metadata) {
+    if (!metadata)
+        return 0;
+
+    // get subscriber address from metadata
+    data.subscriber = metadata->subscriber;
+    subscription = metadata->subscription;
+    bpf_probe_read(&ptr, sizeof(char *), &subscription->implementation_identifier);
+    bpf_probe_read_str(data.implementation, sizeof data.implementation, ptr);
+
+    switch (data.implementation[4]) {
+    case 'f': // rmw_fastrtps_cpp
         // get guid
         message_info = metadata->msginfo;
-        bpf_probe_read(data.guid, 16, ((rmw_message_info_t *) message_info)->publisher_gid.data);
+        bpf_probe_read(data.guid, 16, message_info->publisher_gid.data);
 
-        // get subscriber address from metadata
-        data.subscriber = metadata->subscriber;
-
-        rmw.perf_submit(ctx, &data, sizeof(struct rmw_data_t));
         //message_info_hash.delete(&data.pid);
+        break;
+    case 'c':
+        if (data.implementation[5] == 'y') { // rmw_cyclonedds_cpp
+
+        }
+    default:
+        break;
     }
+    rmw.perf_submit(ctx, &data, sizeof(struct rmw_data_t));
     return 0;
 }
 int rmw_take_with_info_probe(struct pt_regs *ctx, void *subscription,
                              void *ros_message, bool *taken, void *message_info) {
-    struct rmw_data_t data = {};
     rmw_take_metadata_t metadata = {};
-    void *ptr;
+    void *ptr, *subscriber;
+    u32 pid;
 
-    data.pid = bpf_get_current_pid_tgid();
+    pid = bpf_get_current_pid_tgid();
     //data.ts = bpf_ktime_get_ns();
     //bpf_get_current_comm(&data.comm, sizeof data.comm);
     //strcpy(data.func, "rmw_take_with_info enter");
 
     // get memory address of subscriber
     bpf_probe_read(&ptr, sizeof(void *), &((rmw_subscription_t *) subscription)->data);
-    bpf_probe_read(&data.subscriber, sizeof(void *), (ptr + subscriber__OFF));
+    bpf_probe_read(&subscriber, sizeof(void *), (ptr + subscriber__OFF));
 
     // pass subscriber address to return probe
     metadata.msginfo = message_info;
-    metadata.subscriber = data.subscriber;
-    message_info_hash.update(&data.pid, &metadata);
+    metadata.subscriber = subscriber;
+    metadata.subscription = subscription;
+    message_info_hash.update(&pid, &metadata);
 
     //rmw.perf_submit(ctx, &data, sizeof(struct rmw_data_t));
     return 0;
@@ -163,7 +182,7 @@ int add_received_change_probe(struct pt_regs *ctx, void *this, void *change) {
 
 class trace_recv(multiprocessing.Process):
     @perf_callback_factory(event_name='rmw',
-                           data_keys=['ts', 'func', 'comm', 'subscriber', 'pid', 'guid'])
+                           data_keys=['ts', 'implementation', 'func', 'comm', 'subscriber', 'pid', 'guid'])
     def print_rmw(self, *args):
         pass
 
@@ -179,22 +198,22 @@ class trace_recv(multiprocessing.Process):
     def run(self):
         # load BPF program
         self.b = b = BPF(text=prog)
-        b.attach_uretprobe(name="/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/librmw_implementation.so",
+        b.attach_uretprobe(name="/opt/ros/dashing/lib/librmw_implementation.so",
                            sym="rmw_wait",
                            fn_name="rmw_wait_retprobe")
-        b.attach_uretprobe(name="/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/librmw_implementation.so",
+        b.attach_uretprobe(name="/opt/ros/dashing/lib/librmw_implementation.so",
                            sym="rmw_take_with_info",
                            fn_name="rmw_take_with_info_retprobe")
-        b.attach_uprobe(name="/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/librmw_implementation.so",
+        b.attach_uprobe(name="/opt/ros/dashing/lib/librmw_implementation.so",
                         sym="rmw_take_with_info",
                         fn_name="rmw_take_with_info_probe")
-        b.attach_uprobe(name=os.path.realpath('/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/libfastrtps.so'),
+        b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libfastrtps.so'),
                         sym="_ZN8eprosima8fastrtps17SubscriberHistory19add_received_changeEPNS0_4rtps13CacheChange_tE",
                         fn_name="add_received_change_probe")
 
         # header
-        fields = ['layer', 'ts', 'func', 'comm', 'pid', 'subscriber', 'guid', 'seqnum']
-        fmtstr = '{:<10} {:<14.4f} {:<28} {:<11} {:<8} {:<#18x} {:<40} {:<3d}'
+        fields = ['layer', 'ts', 'implementation', 'func', 'comm', 'pid', 'subscriber', 'guid', 'seqnum']
+        fmtstr = '{:<10} {:<14.4f} {:<24} {:<28} {:<11} {:<8} {:<#18x} {:<40} {:<3d}'
         self.log = sofa_ros2_utilities.Log(fields=fields, fmtstr=fmtstr,
                                            cvsfilename='recv_log.csv', print_raw=self.is_alive())
 

@@ -5,6 +5,7 @@ BEGIN
 	printf("Tracing ros dds functions... Hit Ctrl-C to end.\n");
 }
 
+/*
 uprobe:/home/st9540808/Desktop/VS_Code/ros2-dashing-20191213-linux-bionic-amd64/lib/librmw_implementation.so:rmw_wait
 {
 	@start[tid] = nsecs;
@@ -42,4 +43,32 @@ END
 {
 	printf("exit\n");
 	clear(@start);
+}
+*/
+
+uprobe:/opt/ros/dashing/lib/libddsc.so:write_sample_gc
+{
+	@start[arg1] = nsecs;
+}
+uprobe:/opt/ros/dashing/lib/libddsc.so:nn_xpack_send
+/@start[arg0] != 0/
+{
+	printf("1) 0x%lx, lat: %d us\n", arg0, (nsecs - @start[arg0]) / 1000);
+	delete(@start[arg0]);
+	@start2[arg0] = nsecs;
+	// printf("%10ld, %s, 0x%lx\n", nsecs / 1000, "nn_xpack_send1v", arg1);
+}
+/*
+uprobe:/opt/ros/dashing/lib/libddsc.so:nn_xpack_send
+{
+	@start[arg0] = nsecs;
+}
+*/
+
+uprobe:/opt/ros/dashing/lib/libddsc.so:nn_xpack_send1
+/@start2[arg1] != 0/
+{
+	printf("2) 0x%lx, lat: %d us\n", arg1, (nsecs - @start2[arg1]) / 1000);
+	delete(@start2[arg1]);
+	// printf("%10ld, %s, 0x%lx\n", nsecs / 1000, "nn_xpack_send1", arg1);
 }

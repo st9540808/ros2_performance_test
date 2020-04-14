@@ -29,9 +29,11 @@ prog = r"""
 struct cls_egress_data_t {
     u64 ts;
     char magic[8];
-    u8 msg_id;
     u8 guid[16];
     u64 seqnum;
+    u32 addr;
+    u16 port;
+    u8 msg_id;
 };
 
 BPF_PERF_OUTPUT(cls_egress);
@@ -60,6 +62,7 @@ static u16 msg2len[23] = {
 
 #define RTPS_OFF (ETH_HLEN + sizeof(struct iphdr) + sizeof(struct udphdr))
 #define RTPS_HLEN 20
+#define RTPS_VENDORID_OFF 6
 #define RTPS_GUIDPREFIX_OFF 8
 #define RTPS_DATA_WRITERID_OFF 12
 #define RTPS_DATA_SEQNUM_OFF 16
@@ -83,6 +86,10 @@ static int find_rtps_data_submsg(struct __sk_buff *skb, u8 *msg_id) {
     return off;
 }
 
+static void get_vendor_id(struct __sk_buff *skb, u16 *vendorid) {
+    bpf_skb_load_bytes(skb, RTPS_OFF + RTPS_VENDORID_OFF, vendorid, 2);
+}
+
 // get guid and seqnum
 static void get_guid_seqnum(struct __sk_buff *skb, int off, u8 *guid, u64 *seqnum) {
     s32 high;
@@ -95,9 +102,20 @@ static void get_guid_seqnum(struct __sk_buff *skb, int off, u8 *guid, u64 *seqnu
     *seqnum = (((u64) high) << 32u) | low;
 }
 
+static void fix_guidprefix_endianness(u8 *guid, u16 vendorid) {
+    uint32_t *ptr = (uint32_t *) guid; // first byte
+    // check if using cyclonedds
+    if (vendorid == 0x1001) {
+        #pragma unroll
+        for (int i = 0; i < 3; i++, ptr++)
+            *ptr = be32_to_cpu(*ptr);
+    }
+}
+
 int cls_ros2_egress_prog(struct __sk_buff *skb) {
     struct cls_egress_data_t data = {};
     char *magic = data.magic;
+    u16 vendorid = 0;
     u8 msg_id = 0;
     int off = 0;
 
@@ -105,22 +123,27 @@ int cls_ros2_egress_prog(struct __sk_buff *skb) {
     data.magic[4] = 0;
 
     if (!(magic[0] == 'R' && magic[1] == 'T' && magic[2] == 'P' && magic[3] == 'S'))
-        return TC_ACT_OK;
+        return TC_ACT_PIPE;
 
+    bpf_skb_load_bytes(skb, ETH_HLEN + 16, &data.addr, 4);
+    bpf_skb_load_bytes(skb, ETH_HLEN + sizeof(struct iphdr) + 2, &data.port, 2);
+    get_vendor_id(skb, &vendorid);
     off = find_rtps_data_submsg(skb, &msg_id);
 
     if (msg_id == RTPS_SUBMSG_ID_DATA || msg_id == RTPS_SUBMSG_ID_DATAFRAG) {
         get_guid_seqnum(skb, off, data.guid, &data.seqnum);
+        fix_guidprefix_endianness(data.guid, vendorid);
         data.ts = bpf_ktime_get_ns();
         data.msg_id = msg_id;
         cls_egress.perf_submit(skb, &data, sizeof(struct cls_egress_data_t));
     }
-    return TC_ACT_OK;
+    return TC_ACT_PIPE;
 }
 
 int cls_ros2_ingress_prog(struct __sk_buff *skb) {
     struct cls_egress_data_t data = {};
     char *magic = data.magic;
+    u16 vendorid = 0;
     u8 msg_id = 0;
     int off = 0;
 
@@ -128,17 +151,19 @@ int cls_ros2_ingress_prog(struct __sk_buff *skb) {
     data.magic[4] = 0;
 
     if (!(magic[0] == 'R' && magic[1] == 'T' && magic[2] == 'P' && magic[3] == 'S'))
-        return TC_ACT_OK;
+        return TC_ACT_PIPE;
 
+    get_vendor_id(skb, &vendorid);
     off = find_rtps_data_submsg(skb, &msg_id);
 
     if (msg_id == RTPS_SUBMSG_ID_DATA || msg_id == RTPS_SUBMSG_ID_DATAFRAG) {
         get_guid_seqnum(skb, off, data.guid, &data.seqnum);
+        fix_guidprefix_endianness(data.guid, vendorid);
         data.ts = bpf_ktime_get_ns();
         data.msg_id = msg_id;
         cls_ingress.perf_submit(skb, &data, sizeof(struct cls_egress_data_t));
     }
-    return TC_ACT_OK;
+    return TC_ACT_PIPE;
 }
 """
 
@@ -149,7 +174,7 @@ class trace_tc_act(multiprocessing.Process):
         d = args[0]
         d['msg_id'] = {0x15: 'DATA', 0x16: 'DATAFRAG'}[d['msg_id']]
 
-    @perf_callback_factory('cls_egress', ['ts', 'magic', 'guid', 'seqnum', 'msg_id'])
+    @perf_callback_factory('cls_egress', ['ts', 'magic', 'guid', 'seqnum', 'msg_id', 'addr', 'port'])
     def print_cls_egress(self, *args):
         d = args[0]
         d['msg_id'] = {0x15: 'DATA', 0x16: 'DATAFRAG'}[d['msg_id']]
@@ -179,8 +204,8 @@ class trace_tc_act(multiprocessing.Process):
             print("Printing, hit CTRL+C to stop")
 
         # use print_raw if executed as a child
-        fields = ['layer', 'ts', 'guid', 'seqnum', 'msg_id']
-        fmtstr = '{:<20} {:<13.5f} {:<40} {:<7d} {:<10}'
+        fields = ['layer', 'ts', 'guid', 'seqnum', 'msg_id', 'addr', 'port']
+        fmtstr = '{:<20} {:<13.5f} {:<40} {:<7d} {:<10} {:<#12x} {:<#12x}'
         self.log = sofa_ros2_utilities.Log(fields=fields, fmtstr=fmtstr,
                                            cvsfilename='cls_bpf_log.csv', print_raw=self.is_alive())
 
