@@ -111,7 +111,7 @@ int rcl_publish_probe(struct pt_regs *ctx, void *publisher, void *ros_message) {
     case 'f': // rmw_fastrtps_cpp
         // `CustomPublisherInfo`, get information pointed by data in rmw_publisher
         bpf_probe_read(&data.rmw_publisher_, sizeof(void *), (rmw_data + OFF_RMW_PUBLISHER_));
-        bpf_probe_read(data.rmw_guid, sizeof data.rmw_guid,  (rmw_data + OFF_RMW_GUID));
+        bpf_probe_read(data.rmw_guid, sizeof data.rmw_guid,  (rmw_data + OFF_RMW_GUID + 8));
 
         // `eprosima::fastrtps::PublisherImpl`
         bpf_probe_read(&data.mp_impl, sizeof(void *), (data.rmw_publisher_ + OFF_MP_IMPL));
