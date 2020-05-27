@@ -113,7 +113,6 @@ int rcl_publish_probe(struct pt_regs *ctx, void *publisher, void *ros_message) {
     topic_key_t key = {};
     int len;
 
-    data.ts = bpf_ktime_get_ns();
     data.pid = bpf_get_current_pid_tgid();
     data.ros_message = ros_message;
     bpf_get_current_comm(&data.comm, sizeof data.comm);
@@ -160,6 +159,7 @@ int rcl_publish_probe(struct pt_regs *ctx, void *publisher, void *ros_message) {
             //bpf_probe_read(&key.pubh, sizeof(s32), rmw_data);
             key.ros_message = ros_message;
             key.pid = data.pid;
+            data.ts = bpf_ktime_get_ns(); // record timestamp at the end of this eBPF program
             cyclone_publish.update(&key, (struct cyclone_pub_val *) &data);
             return 0;
         }
@@ -167,6 +167,7 @@ int rcl_publish_probe(struct pt_regs *ctx, void *publisher, void *ros_message) {
         break;
     }
 
+    data.ts = bpf_ktime_get_ns(); // record timestamp at the end of this eBPF program
     send_rcl.perf_submit(ctx, &data, sizeof(send_rcl_data_t));
     return 0;
 }
