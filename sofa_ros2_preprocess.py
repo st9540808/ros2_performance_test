@@ -162,6 +162,15 @@ def print_all_msgs(res):
             print(msg_log)
             print('')
 
+def get_rcl_publish(df):
+    try:
+        rcl = df.loc[df['func'] == 'rcl_publish'].iloc[0] # shuold be unique
+    except ValueError as e:
+        print(e)
+        return pd.Series('false', index=['layer']) # return a dummy for easy checkup
+    return rcl
+
+# @profile
 def ros_msgs_trace_read(items, cfg):
     sofa_fieldnames = [
         "timestamp",  # 0
@@ -208,7 +217,25 @@ def ros_msgs_trace_read(items, cfg):
     traces = pd.DataFrame(traces)
     return traces
 
-def ros_msgs_trace_read_os_lat(items, cfg):
+def ros_msgs_trace_read_ros_lat_send(items, cfg):
+    sofa_fieldnames = [
+        "timestamp",  # 0
+        "event",      # 1
+        "duration",   # 2
+        "deviceId",   # 3
+        "copyKind",   # 4
+        "payload",    # 5
+        "bandwidth",  # 6
+        "pkt_src",    # 7
+        "pkt_dst",    # 8
+        "pid",        # 9
+        "tid",        # 10
+        "name",       # 11
+        "category",   # 12
+        "unit",
+        "msg_id"]
+
+def ros_msgs_trace_read_os_lat_send(items, cfg):
     sofa_fieldnames = [
         "timestamp",  # 0
         "event",      # 1
@@ -228,7 +255,7 @@ def ros_msgs_trace_read_os_lat(items, cfg):
     traces = []
     topic_name, all_msgs_log = items
     for msg_id, msg_log in all_msgs_log.items():
-        start = msg_log.iloc[0]
+        start = get_rcl_publish(msg_log)
         if start.at['layer'] != 'rcl': # skip when the first function call is not from rcl
             continue
 
@@ -237,10 +264,9 @@ def ros_msgs_trace_read_os_lat(items, cfg):
 
         for _, sendSync in all_sendSync.iterrows():
             trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
-            addr = sendSync['addr']
-            port = sendSync['port']
-            egress = all_egress.loc[(all_egress['addr'] == addr) & (all_egress['port'] == port)].iloc[0]
-
+            addr = sendSync['daddr']
+            port = sendSync['dport']
+            egress = all_egress.loc[(all_egress['daddr'] == addr) & (all_egress['dport'] == port)].iloc[0]
 
             time = sendSync['ts']
             if cfg is not None and not cfg.absolute_timestamp:
@@ -253,12 +279,247 @@ def ros_msgs_trace_read_os_lat(items, cfg):
                              str(ipaddress.IPv4Address(socket.ntohl(int(addr)))),
                              socket.ntohs(int(port)))
             trace['unit'] = 'ms'
+            trace['msg_id'] = msg_id
             traces.append(trace)
     traces = pd.DataFrame(traces)
     return traces
 
-def ros_msgs_trace_read_dds_lat(items, cfg):
-    pass
+def ros_msgs_trace_read_os_lat_recv(items, cfg):
+    sofa_fieldnames = [
+        "timestamp",  # 0
+        "event",      # 1
+        "duration",   # 2
+        "deviceId",   # 3
+        "copyKind",   # 4
+        "payload",    # 5
+        "bandwidth",  # 6
+        "pkt_src",    # 7
+        "pkt_dst",    # 8
+        "pid",        # 9
+        "tid",        # 10
+        "name",       # 11
+        "category",   # 12
+        "unit",
+        "msg_id"]
+
+    traces = []
+    topic_name, all_msgs_log = items
+    for msg_id, msg_log in all_msgs_log.items():
+        start = get_rcl_publish(msg_log)
+        if start.at['layer'] != 'rcl': # skip when the first function call is not from rcl
+            continue
+
+        all_recv = msg_log.loc[msg_log['func'] == 'UDPResourceReceive exit'].copy()
+        all_ingress = msg_log.loc[msg_log['layer'] == 'cls_ingress'].copy()
+
+        for _, ingress in all_ingress.iterrows():
+            trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+            addr = ingress['daddr']
+            port = ingress['dport']
+            recv = all_recv.loc[(all_recv['dport'] == port)].iloc[0]
+
+            time = ingress['ts']
+            if cfg is not None and not cfg.absolute_timestamp:
+                time = ingress['ts'] - cfg.time_base
+            trace['timestamp'] = time
+            trace['duration'] = (recv['ts'] - ingress['ts']) * 1e3 # ms
+            trace['name'] = "[%s] %s -> [%s] %s <br>Topic Name: %s<br>Source address: %s:%d, Destination address: %s:%d<br>Seqnum: %d" % \
+                (ingress['layer'], '', recv['layer'], recv['func'], start['topic_name'],
+                str(ipaddress.IPv4Address(socket.ntohl(int(ingress['saddr'])))), socket.ntohs(int(ingress['sport'])),
+                str(ipaddress.IPv4Address(socket.ntohl(int(addr)))), socket.ntohs(int(port)),
+                int(ingress['seqnum']))
+            trace['unit'] = 'ms'
+            trace['msg_id'] = msg_id
+            traces.append(trace)
+    traces = pd.DataFrame(traces)
+    return traces
+
+def ros_msgs_trace_read_dds_lat_send(items, cfg):
+    sofa_fieldnames = [
+        "timestamp",  # 0
+        "event",      # 1
+        "duration",   # 2
+        "deviceId",   # 3
+        "copyKind",   # 4
+        "payload",    # 5
+        "bandwidth",  # 6
+        "pkt_src",    # 7
+        "pkt_dst",    # 8
+        "pid",        # 9
+        "tid",        # 10
+        "name",       # 11
+        "category",   # 12
+        "unit",
+        "msg_id"]
+
+    traces = []
+    topic_name, all_msgs_log = items
+    for msg_id, msg_log in all_msgs_log.items():
+        start = get_rcl_publish(msg_log)
+        if start.at['layer'] != 'rcl': # skip when the first function call is not from rcl
+            continue
+
+        all_sendSync = msg_log.loc[msg_log['func'] == 'sendSync'].copy()
+        add_pub_change = msg_log.loc[msg_log['func'] == 'add_pub_change'].copy().squeeze()
+
+        for _, sendSync in all_sendSync.iterrows():
+            trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+
+            time = add_pub_change['ts']
+            if cfg is not None and not cfg.absolute_timestamp:
+                time = add_pub_change['ts'] - cfg.time_base
+            trace['timestamp'] = time
+            trace['duration'] = (sendSync['ts'] - add_pub_change['ts']) * 1e3 # ms
+            trace['name'] = "[%s] %s -> [%s] %s <br>Topic Name: %s" % \
+                            (add_pub_change['layer'], add_pub_change['func'], sendSync['layer'], sendSync['func'], \
+                             start['topic_name'])
+            trace['unit'] = 'ms'
+            trace['msg_id'] = msg_id
+            traces.append(trace)
+    traces = pd.DataFrame(traces)
+    return traces
+
+def ros_msgs_trace_read_dds_ros_lat_recv(items, cfg):
+    sofa_fieldnames = [
+        "timestamp",  # 0
+        "event",      # 1
+        "duration",   # 2
+        "deviceId",   # 3
+        "copyKind",   # 4
+        "payload",    # 5
+        "bandwidth",  # 6
+        "pkt_src",    # 7
+        "pkt_dst",    # 8
+        "pid",        # 9
+        "tid",        # 10
+        "name",       # 11
+        "category",   # 12
+        "unit",
+        "msg_id"]
+
+    traces_indds = []
+    traces_inros = []
+    topic_name, all_msgs_log = items
+    for msg_id, msg_log in all_msgs_log.items():
+        # msg_log['subscriber'] = msg_log['subscriber'].apply(lambda x: np.nan if x is pd.NA else x)
+        gb_sub = msg_log.groupby('subscriber') # How many subscribers receviced this ros message?
+        start = get_rcl_publish(msg_log)
+        if start.at['layer'] != 'rcl': # skip when the first function call is not from rcl
+            continue
+
+        for sub_addr, sub_log in gb_sub:
+            trace_indds = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+            trace_inros = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+            end = sub_log.iloc[-1]
+            if end.at['layer'] != 'rmw': # skip when the last function call is not from rmw (eg. rosbag2)
+                continue
+
+            try:
+                pid_ros, = sub_log.loc[sub_log['func'] == 'rmw_take_with_info exit', 'pid'].unique() # shuold be unique
+                pid_dds, = sub_log.loc[sub_log['func'] == 'add_received_change', 'pid'].unique()
+            except ValueError as e:
+                print(e)
+                continue
+
+            try: # Consider missing 'rmw_wait exit' here
+                os_return = msg_log.loc[(msg_log['func'] == 'UDPResourceReceive exit') & (msg_log['pid'] == pid_dds)].iloc[0]
+                dds_return = msg_log.loc[(msg_log['func'] == 'rmw_wait exit') & (msg_log['pid'] == pid_ros)].iloc[0]
+                ros_return = sub_log.loc[sub_log['func'] == 'rmw_take_with_info exit'].squeeze()
+            except IndexError as e:
+                print(e)
+                continue
+
+            time = os_return['ts']
+            if cfg is not None and not cfg.absolute_timestamp:
+                time = os_return['ts'] - cfg.time_base
+            trace_indds['timestamp'] = time
+            trace_indds['duration'] = (dds_return['ts'] - os_return['ts']) * 1e3 # ms
+            trace_indds['name'] = "[%s] %s -> [%s] %s <br>Topic Name: %s<br>Transmission: %s -> %s" % \
+                (os_return['layer'], os_return['func'], dds_return['layer'], dds_return['func'],
+                 start['topic_name'], start['comm'], os_return['comm'])
+            trace_indds['unit'] = 'ms'
+            trace_indds['msg_id'] = msg_id
+
+            time = dds_return['ts']
+            if cfg is not None and not cfg.absolute_timestamp:
+                time = dds_return['ts'] - cfg.time_base
+            trace_inros['timestamp'] = time
+            trace_inros['duration'] = (ros_return['ts'] - dds_return['ts']) * 1e3 # ms
+            trace_inros['name'] = "[%s] %s -> [%s] %s <br>Topic Name: %s<br>Transmission: %s -> %s" % \
+                (dds_return['layer'], dds_return['func'], ros_return['layer'], ros_return['func'],
+                 start['topic_name'], start['comm'], ros_return['comm'])
+            trace_inros['unit'] = 'ms'
+            trace_inros['msg_id'] = msg_id
+
+            traces_indds.append(trace_indds)
+            traces_inros.append(trace_inros)
+    traces_dds = pd.DataFrame(traces_indds)
+    traces_ros = pd.DataFrame(traces_inros)
+    return (traces_dds, traces_ros)
+
+def ros_msgs_trace_read_NET_real(items, cfg):
+    sofa_fieldnames = [
+        "timestamp",  # 0
+        "event",      # 1
+        "duration",   # 2
+        "deviceId",   # 3
+        "copyKind",   # 4
+        "payload",    # 5
+        "bandwidth",  # 6
+        "pkt_src",    # 7
+        "pkt_dst",    # 8
+        "pid",        # 9
+        "tid",        # 10
+        "name",       # 11
+        "category",   # 12
+        "unit",
+        "msg_id"]
+
+    traces = []
+    topic_name, all_msgs_log = items
+    for msg_id, msg_log in all_msgs_log.items():
+        start = msg_log.iloc[0]
+        if start.at['layer'] != 'rcl': # skip when the first function call is not from rcl
+            continue
+
+        for _, sendSync in all_sendSync.iterrows():
+            trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+
+            time = add_pub_change['ts']
+            if cfg is not None and not cfg.absolute_timestamp:
+                time = add_pub_change['ts'] - cfg.time_base
+            trace['timestamp'] = time
+            trace['duration'] = (sendSync['ts'] - time) * 1e3 # ms
+            trace['name'] = "[%s] %s -> [%s] %s <br>Topic Name: %s" % \
+                            (add_pub_change['layer'], add_pub_change['func'], sendSync['layer'], sendSync['func'], \
+                             start['topic_name'])
+            trace['unit'] = 'ms'
+            traces.append(trace)
+    traces = pd.DataFrame(traces)
+    return traces
+
+def find_outliers(all_traces, filt):
+    """find outliers base on filt"""
+    mean = filt.data['duration'].mean()
+    std = filt.data['duration'].std()
+    thres = mean + std * 3
+    targets_trace = pd.DataFrame(columns=sofa_fieldnames)
+    targets = filt.data.loc[filt.data['duration'] > thres, 'msg_id']
+    for idx, msg_id in targets.iteritems():
+        pts = []
+        for trace in all_traces:
+            tgt = trace.data[trace.data['msg_id'] == msg_id]
+            pts.append(tgt)
+        targets_trace = pd.concat([targets_trace, *pts])
+    # print(targets_trace)
+    sofatrace_targets = sofa_models.SOFATrace()
+    sofatrace_targets.name = 'outliers'
+    sofatrace_targets.title = 'outliers'
+    sofatrace_targets.color = 'Black'
+    sofatrace_targets.x_field = 'timestamp'
+    sofatrace_targets.y_field = 'duration'
+    sofatrace_targets.data = targets_trace
+    return sofatrace_targets
 
 def run(cfg):
     """ Start preprocessing. """
@@ -293,39 +554,99 @@ def run(cfg):
     # res = ros_msgs_trace_read(next(iter(all_msgs.items())), cfg=cfg)
 
     # Calculate time spent in OS for all topics
-    os_lat = []
+    os_lat_send = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        future_res = {executor.submit(ros_msgs_trace_read_os_lat, item, cfg=cfg): item for item in all_msgs.items()}
+        future_res = {executor.submit(ros_msgs_trace_read_os_lat_send, item, cfg=cfg): item for item in all_msgs.items()}
         for future in concurrent.futures.as_completed(future_res):
             item = future_res[future]
             topic = item[0]
-            os_lat.append(future.result())
-    print(os_lat)
+            os_lat_send.append(future.result())
+    # print(os_lat_send)
 
-    # dds_lat = []
-    # with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-    #     future_res = {executor.submit(ros_msgs_trace_read_dds_lat, item, cfg=cfg): item for item in all_msgs.items()}
-    #     for future in concurrent.futures.as_completed(future_res):
-    #         item = future_res[future]
-    #         topic = item[0]
-    #         dds_lat.append(future.result())
-    # print(dds_lat)
+    dds_lat_send = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+        future_res = {executor.submit(ros_msgs_trace_read_dds_lat_send, item, cfg=cfg): item for item in all_msgs.items()}
+        for future in concurrent.futures.as_completed(future_res):
+            item = future_res[future]
+            topic = item[0]
+            dds_lat_send.append(future.result())
+    # print(dds_lat_send)
+
+    os_lat_recv = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+        future_res = {executor.submit(ros_msgs_trace_read_os_lat_recv, item, cfg=cfg): item for item in all_msgs.items()}
+        for future in concurrent.futures.as_completed(future_res):
+            item = future_res[future]
+            topic = item[0]
+            os_lat_recv.append(future.result())
+    print(os_lat_recv)
+
+    dds_lat_recv = []
+    ros_executor_recv = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+        future_res = {executor.submit(ros_msgs_trace_read_dds_ros_lat_recv, item, cfg=cfg): item for item in all_msgs.items()}
+        for future in concurrent.futures.as_completed(future_res):
+            item = future_res[future]
+            print(future.result())
+            # topic = item[0]
+            dds_lat_recv.append(future.result()[0])
+            ros_executor_recv.append(future.result()[1])
+    # print(dds_lat_recv)
+    # print(ros_executor_recv)
 
     sofatrace = sofa_models.SOFATrace()
     sofatrace.name = 'ros2_latency'
     sofatrace.title = 'ros2_latency'
-    sofatrace.color = next(color)
+    sofatrace.color = 'DeepPink'
     sofatrace.x_field = 'timestamp'
     sofatrace.y_field = 'duration'
     sofatrace.data = pd.concat(res) # TODO:
 
-    sofatrace_os_lat = sofa_models.SOFATrace()
-    sofatrace_os_lat.name = 'os_send_latency'
-    sofatrace_os_lat.title = 'os_send_latency'
-    sofatrace_os_lat.color = next(color)
-    sofatrace_os_lat.x_field = 'timestamp'
-    sofatrace_os_lat.y_field = 'duration'
-    sofatrace_os_lat.data = pd.concat(os_lat)
+    sofatrace_ros_executor_recv = sofa_models.SOFATrace()
+    sofatrace_ros_executor_recv.name = 'ros2_executor_recv'
+    sofatrace_ros_executor_recv.title = 'ros2_executor_recv'
+    sofatrace_ros_executor_recv.color = next(color_recv)
+    sofatrace_ros_executor_recv.x_field = 'timestamp'
+    sofatrace_ros_executor_recv.y_field = 'duration'
+    sofatrace_ros_executor_recv.data = pd.concat(ros_executor_recv)
+
+    sofatrace_dds_lat_send = sofa_models.SOFATrace()
+    sofatrace_dds_lat_send.name = 'dds_send_latency'
+    sofatrace_dds_lat_send.title = 'dds_send_latency'
+    sofatrace_dds_lat_send.color = next(color_send)
+    sofatrace_dds_lat_send.x_field = 'timestamp'
+    sofatrace_dds_lat_send.y_field = 'duration'
+    sofatrace_dds_lat_send.data = pd.concat(dds_lat_send)
+
+    sofatrace_dds_lat_recv = sofa_models.SOFATrace()
+    sofatrace_dds_lat_recv.name = 'dds_recv_latency'
+    sofatrace_dds_lat_recv.title = 'dds_recv_latency'
+    sofatrace_dds_lat_recv.color = next(color_recv)
+    sofatrace_dds_lat_recv.x_field = 'timestamp'
+    sofatrace_dds_lat_recv.y_field = 'duration'
+    sofatrace_dds_lat_recv.data = pd.concat(dds_lat_recv)
+
+    sofatrace_os_lat_send = sofa_models.SOFATrace()
+    sofatrace_os_lat_send.name = 'os_send_latency'
+    sofatrace_os_lat_send.title = 'os_send_latency'
+    sofatrace_os_lat_send.color = next(color_send)
+    sofatrace_os_lat_send.x_field = 'timestamp'
+    sofatrace_os_lat_send.y_field = 'duration'
+    sofatrace_os_lat_send.data = pd.concat(os_lat_send)
+
+    sofatrace_os_lat_recv = sofa_models.SOFATrace()
+    sofatrace_os_lat_recv.name = 'os_recv_latency'
+    sofatrace_os_lat_recv.title = 'os_recv_latency'
+    sofatrace_os_lat_recv.color = next(color_recv)
+    sofatrace_os_lat_recv.x_field = 'timestamp'
+    sofatrace_os_lat_recv.y_field = 'duration'
+    sofatrace_os_lat_recv.data = pd.concat(os_lat_recv)
+
+
+    sofatrace_targets = find_outliers(
+        [sofatrace, sofatrace_ros_executor_recv, \
+         sofatrace_dds_lat_send, sofatrace_dds_lat_recv, \
+         sofatrace_os_lat_send, sofatrace_os_lat_recv], sofatrace)
 
     # cmd_vel = all_msgs['/cmd_vel']
     # cmd_vel_msgids = [('1.f.c5.ba.f4.30.0.0.1.0.0.0|0.0.10.3', num) for num in [46, 125, 170, 208, 269, 329, 545, 827, 918, 1064, 1193, 1228, 1282]]
@@ -339,7 +660,10 @@ def run(cfg):
     # highlight.y_field = 'duration'
     # highlight.data = pd.concat([res2])
 
-    return [sofatrace, sofatrace_os_lat]
+    return [sofatrace,
+            sofatrace_ros_executor_recv,
+            sofatrace_dds_lat_send, sofatrace_dds_lat_recv,
+            sofatrace_os_lat_send, sofatrace_os_lat_recv, sofatrace_targets]
 
 if __name__ == "__main__":
     # read_csv = functools.partial(pd.read_csv, dtype={'pid':'Int32', 'seqnum':'Int64'})
