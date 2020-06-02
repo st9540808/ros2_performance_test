@@ -184,18 +184,18 @@ int rcl_publish_probe(struct pt_regs *ctx, void *publisher, void *ros_message) {
     return 0;
 }
 
-BPF_HASH(whc_hash, void *, ddsi_guid_t);
-BPF_HASH(nn_xpack_hash, void *, ddsi_guid_t);
+BPF_HASH(whc_guid_hash, void *, ddsi_guid_t);
+BPF_HASH(nn_xpack_guid_hash, void *, ddsi_guid_t);
 #define m_guid_OFF 88
 #define m_whc_OFF  560
 #define m_xp_OFF   544
 int cyclone_dds_write_impl_probe(struct pt_regs *ctx, void *wr, void *data) {
     // defer to this function to output data. Memory address of datawriter is not
-    // visible in rcl_publish, because cyclonedds use an integer handle to represent an object.
+    // visible in rcl_publish, because cyclonedds uses an integer handle to represent an object.
     struct cyclone_pub_key key = {};
     send_rcl_data_t *val;
     u32 pid;
-    void *m_xp;
+    void *m_xp; // struct nn_xpack*
     ddsi_guid_t *guid;
 
     key.ros_message = data;
@@ -214,8 +214,8 @@ int cyclone_dds_write_impl_probe(struct pt_regs *ctx, void *wr, void *data) {
     bpf_probe_read(&m_xp, sizeof m_xp, (wr + m_xp_OFF));
 
     // associate guid with address of whc and m_xp
-    whc_hash.update(&val->mp_writer, guid);
-    nn_xpack_hash.update(&m_xp, guid);
+    whc_guid_hash.update(&val->mp_writer, guid);
+    nn_xpack_guid_hash.update(&m_xp, guid);
 
     send_rcl.perf_submit(ctx, val, sizeof(send_rcl_data_t));
     return 0;
@@ -235,7 +235,7 @@ int cyclone_whc_default_insert_seq(struct pt_regs *ctx, void *whc, int64_t max_d
     data.seqnum = seq;
 
     // read guid from hash
-    guid = whc_hash.lookup(&data.publisher);
+    guid = whc_guid_hash.lookup(&data.publisher);
     if (!guid)
         return 0;
     memcpy(data.guid, guid, sizeof *guid);
@@ -263,7 +263,7 @@ int cyclone_nn_xpack_send1(struct pt_regs *ctx, void *loc, void *varg) {
     ddsi_guid_t *guid;
 
     // read guid from hash
-    guid = nn_xpack_hash.lookup(&varg);
+    guid = nn_xpack_guid_hash.lookup(&varg);
     if (!guid)
         return 0;
     memcpy(data.guid, guid, sizeof *guid);
