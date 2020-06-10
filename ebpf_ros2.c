@@ -48,11 +48,13 @@ typedef struct send_cyclonedds_data {
     u64 ts;
     u32 pid;
     char comm[TASK_COMM_LEN];
-    char func[28];
+    char func[24];
 
     void *publisher;
     u8 guid[16];
     u64 seqnum;
+    u32 daddr;
+    u16 dport;
 } send_cyclonedds_data_t;
 
 BPF_PERF_OUTPUT(send_rcl);
@@ -244,20 +246,52 @@ int cyclone_whc_default_insert_seq(struct pt_regs *ctx, void *whc, int64_t max_d
     return 0;
 }
 
+// trace write_sample_gc using a uprobe and uretprobe because sequence number
+// is updated in this function
 #define seq_OFF 240
+#define whc_OFF 392
+typedef struct write_sample_gc_val {
+    u64 ts;
+    void *wr;
+} write_sample_gc_val_t;
+BPF_HASH(write_sample_gc, u32, write_sample_gc_val_t);
 int cyclone_write_sample_gc(struct pt_regs *ctx, void *arg0, void *arg1, void *wr) {
+    write_sample_gc_val_t val = {};
+    u32 pid = bpf_get_current_pid_tgid();
+    val.ts = bpf_ktime_get_ns();
+    val.wr = wr;
+    write_sample_gc.update(&pid, &val);
+    return 0;
+}
+int cyclone_write_sample_gc_retprobe(struct pt_regs *ctx) {
     send_cyclonedds_data_t data = {};
+    write_sample_gc_val_t *val_ptr;
+    ddsi_guid_t *guid;
 
-    data.ts = bpf_ktime_get_ns();
     data.pid = bpf_get_current_pid_tgid();
+    val_ptr = write_sample_gc.lookup(&data.pid);
+    if (!val_ptr)
+        return 0;
+
+    // look up guid by whc
+    bpf_probe_read(&data.publisher, sizeof(void *), (val_ptr->wr + whc_OFF));
+    guid = whc_guid_hash.lookup(&data.publisher);
+    if (!guid)
+        return 0;
+
+    data.ts = val_ptr->ts;
     bpf_get_current_comm(&data.comm, sizeof data.comm);
     strcpy(data.func, "write_sample_gc");
 
-    bpf_probe_read(&data.seqnum, sizeof data.seqnum, (wr + seq_OFF));
+    // read guid and seqnum
+    memcpy(data.guid, guid, sizeof *guid);
+    bpf_probe_read(&data.seqnum, sizeof data.seqnum, (val_ptr->wr + seq_OFF));
     send_cyclonedds.perf_submit(ctx, &data, sizeof(send_cyclonedds_data_t));
     return 0;
 }
 
+#define nn_xpack__conn_OFF 80 // source port is stored in nn_xpack
+#define nn_locator_t__port_OFF 4 // destination port is stored in nn_locator_t
 int cyclone_nn_xpack_send1(struct pt_regs *ctx, void *loc, void *varg) {
     send_cyclonedds_data_t data = {};
     ddsi_guid_t *guid;
@@ -272,6 +306,10 @@ int cyclone_nn_xpack_send1(struct pt_regs *ctx, void *loc, void *varg) {
     data.pid = bpf_get_current_pid_tgid();
     bpf_get_current_comm(&data.comm, sizeof data.comm);
     strcpy(data.func, "nn_xpack_send1");
+
+    // read port
+    bpf_probe_read(&data.dport, sizeof(u16), (loc + nn_locator_t__port_OFF));
+    data.dport = cpu_to_be16(data.dport);
 
     send_cyclonedds.perf_submit(ctx, &data, sizeof(send_cyclonedds_data_t));
     return 0;

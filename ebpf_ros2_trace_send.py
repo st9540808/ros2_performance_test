@@ -37,7 +37,7 @@ class trace_send(multiprocessing.Process):
         d['layer'] = 'fastrtps'
 
     @perf_callback_factory(event_name='send_cyclonedds',
-                           data_keys=['func', 'ts', 'comm', 'pid', 'publisher', 'guid', 'seqnum'])
+                           data_keys=['func', 'ts', 'comm', 'pid', 'publisher', 'guid', 'seqnum', 'dport'])
     def print_cyclonedds(self, *args):
         d = args[0]
         if d['seqnum'] == 0:
@@ -91,9 +91,12 @@ class trace_send(multiprocessing.Process):
         b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
                         sym="nn_xpack_send1",
                         fn_name="cyclone_nn_xpack_send1")
-        # b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
-        #                 sym="write_sample_gc",
-        #                 fn_name="cyclone_write_sample_gc")
+        b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
+                        sym="write_sample_gc",
+                        fn_name="cyclone_write_sample_gc")
+        b.attach_uretprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
+                           sym="write_sample_gc",
+                           fn_name="cyclone_write_sample_gc_retprobe")
 
         # topic filter (whitelist)
         if self.config['whitelist'] and os.path.exists('whitelist.txt'):
