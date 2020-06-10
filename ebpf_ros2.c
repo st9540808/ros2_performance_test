@@ -531,7 +531,7 @@ typedef struct recv_cyclonedds_data {
     u64 ts;
     u32 pid;
     char comm[TASK_COMM_LEN];
-    char func[28];
+    char func[24];
 
     void *subscriber;
     u8 guid[16];
@@ -563,13 +563,17 @@ typedef struct rmw_subscription_t {
 
 // Type used to trace ROS2
 typedef struct rmw_take_metadata_t {
-    rmw_message_info_t *msginfo;
+    union {
+        rmw_message_info_t *msginfo;
+        ddsi_guid_t *cyclone_guid;
+    } info;
     void *subscriber; // for implementation specific data type
     rmw_subscription_t *subscription;
 } rmw_take_metadata_t;
 
 BPF_HASH(message_info_hash, u32, rmw_take_metadata_t, 1024);
 BPF_HASH(cyclone_take_hash, struct cyclone_pub_key, int, 1024); // a set for (ros_message, pid)
+BPF_HASH(cyclone_rhc_guid_hash, void *, ddsi_guid_t, 1024); // map pointer to rhc to guid
 
 int rmw_wait_retprobe(struct pt_regs *ctx) {
     recv_rmw_data_t data = {};
@@ -595,6 +599,7 @@ int rmw_take_with_info_retprobe(struct pt_regs *ctx) {
     rmw_take_metadata_t *metadata;
     rmw_message_info_t *message_info;
     rmw_subscription_t *subscription;
+    ddsi_guid_t *guid;
     char *ptr;
     u32 pid;
 
@@ -615,17 +620,22 @@ int rmw_take_with_info_retprobe(struct pt_regs *ctx) {
     bpf_probe_read(&ptr, sizeof(char *), &subscription->topic_name);
     bpf_probe_read_str(data.topic_name, sizeof data.topic_name, ptr);
 
+    // TODO: Add topic filter here, and move message_info_hash.lookup below topic filter
+
     switch (data.implementation[4]) {
     case 'f': // rmw_fastrtps_cpp
         // get guid
-        message_info = metadata->msginfo;
+        message_info = metadata->info.msginfo;
         bpf_probe_read(data.guid, 16, message_info->publisher_gid.data);
 
         //message_info_hash.delete(&data.pid);
         break;
     case 'c':
         if (data.implementation[5] == 'y') { // rmw_cyclonedds_cpp
-
+            guid = cyclone_rhc_guid_hash.lookup(&data.subscriber);
+            if (!guid)
+                return 0;
+            memcpy(data.guid, guid, sizeof(ddsi_guid_t));
         }
     default:
         break;
@@ -638,19 +648,29 @@ int rmw_take_with_info_probe(struct pt_regs *ctx, void *subscription,
     rmw_take_metadata_t metadata = {};
     void *ptr, *subscriber;
     u32 pid;
+    char implementation[32];
 
     pid = bpf_get_current_pid_tgid();
     //data.ts = bpf_ktime_get_ns();
     //bpf_get_current_comm(&data.comm, sizeof data.comm);
     //strcpy(data.func, "rmw_take_with_info enter");
 
-    // get memory address of subscriber
-    bpf_probe_read(&ptr, sizeof(void *), &((rmw_subscription_t *) subscription)->data);
-    bpf_probe_read(&subscriber, sizeof(void *), (ptr + subscriber__OFF));
+    bpf_probe_read(&ptr, sizeof(char *), &((rmw_subscription_t *) subscription)->implementation_identifier);
+    bpf_probe_read_str(implementation, sizeof implementation, ptr);
+    if (implementation[4] == 'f') { // rmw_fastrtps_cpp
+        // get memory address of subscriber
+        bpf_probe_read(&ptr, sizeof(void *), &((rmw_subscription_t *) subscription)->data);
+        bpf_probe_read(&subscriber, sizeof(void *), (ptr + subscriber__OFF));
+        metadata.subscriber = subscriber;
+        metadata.info.msginfo = message_info;
+    } else if (implementation[5] == 'y') { // rmw_cyclonedds_cpp
+        struct cyclone_pub_key key = {};
+        key.ros_message = ros_message;
+        key.pid = pid;
+        cyclone_take_hash.update(&key, &(int){0x1});
+    }
 
     // pass subscriber address to return probe
-    metadata.msginfo = message_info;
-    metadata.subscriber = subscriber;
     metadata.subscription = subscription;
     message_info_hash.update(&pid, &metadata);
 
@@ -770,9 +790,23 @@ int fastrtps_ReceiverResource_OnDataReceived_probe(struct pt_regs *ctx, void *th
 
 /////////////////////////////////////////////////////////////////////////////////////
 // cyclone DDS
-BPF_HASH(ddsrt_recvmsg_hash, u32, u64, 1024); // pid to nsecs
+
+// `ddsrt_recvmsg_hash` maps pid to recv_cyclonedds_data_t,
+// the value will be written by multiple eBPF programs
+// (see who calls ddsrt_recvmsg.lookup())
+BPF_HASH(ddsrt_recvmsg_hash, u32, recv_cyclonedds_data_t, 512);
+int cyclone_ddsi_udp_conn_read_probe(struct pt_regs *ctx, void *conn, unsigned char * buf,
+                                     size_t len, bool allow_spurious, nn_locator_t *srcloc)
+{
+    recv_cyclonedds_data_t data = {};
+    u32 pid = bpf_get_current_pid_tgid();
+    data.pid = pid;
+    ddsrt_recvmsg_hash.update(&pid, &data);
+    return 0;
+}
 int cyclone_ddsrt_recvmsg_retprobe(struct pt_regs *ctx)
 {
+    recv_cyclonedds_data_t *data_ptr;
     int ret = PT_REGS_RC(ctx);
     u32 pid;
     u64 ts;
@@ -780,21 +814,16 @@ int cyclone_ddsrt_recvmsg_retprobe(struct pt_regs *ctx)
     if (ret == -53) //  <+185>:   cmp    eax,0xffffffcb
         return 0;
 
-    ts = bpf_ktime_get_ns();
     pid = bpf_get_current_pid_tgid();
-    ddsrt_recvmsg_hash.update(&pid, &ts);
+    data_ptr = ddsrt_recvmsg_hash.lookup(&pid);
+    if (!data_ptr)
+        return 0;
+    data_ptr->ts = bpf_ktime_get_ns();
     return 0;
 }
-
+/*
 BPF_HASH(ddsi_udp_conn_hash, u32, void *, 1024);
 BPF_HASH(conn_to_recvmsg_ts, void *, u64, 1024);
-int cyclone_ddsi_udp_conn_read_probe(struct pt_regs *ctx, void *conn, unsigned char * buf,
-                                     size_t len, bool allow_spurious, nn_locator_t *srcloc)
-{
-    u32 pid = bpf_get_current_pid_tgid();
-    ddsi_udp_conn_hash.update(&pid, &conn);
-    return 0;
-}
 int cyclone_ddsi_udp_conn_read_retprobe(struct pt_regs *ctx)
 {
     u32 pid;
@@ -816,6 +845,7 @@ int cyclone_ddsi_udp_conn_read_retprobe(struct pt_regs *ctx)
     conn_to_recvmsg_ts.update(conn_ptr, ts_ptr); // associate pointer to conn with a timetamp
     return 0;
 }
+*/
 
 #define rst_OFF 8
 #define conn_OFF 40
@@ -833,30 +863,69 @@ int cyclone_handle_regular_probe(struct pt_regs *ctx, void *rst, int64_t tnow, v
 }
 int cyclone_deliver_user_data_probe(struct pt_regs *ctx, void *sampleinfo)
 {
-    recv_cyclonedds_data_t data = {};
+    recv_cyclonedds_data_t *data_ptr;
+    u32 pid;
     void *rst;
     void *conn;
     u64 *ts_ptr;
 
-    bpf_probe_read(&rst, sizeof(void *), sampleinfo + rst_OFF);
-    bpf_probe_read(&conn, sizeof(void *), rst + conn_OFF);
-    ts_ptr = conn_to_recvmsg_ts.lookup(&conn);
-    if (!ts_ptr)
+    pid = bpf_get_current_pid_tgid();
+    data_ptr = ddsrt_recvmsg_hash.lookup(&pid);
+    if (!data_ptr)
         return 0;
 
-    data.ts = *ts_ptr;
-    data.pid = bpf_get_current_pid_tgid();
-    strcpy(data.func, "deliver_user_data");
-
-    // read port
-    bpf_probe_read(&data.dport, sizeof(u16), conn);
-
-    data.subscriber = sampleinfo;
+    bpf_probe_read(&rst, sizeof(void *), sampleinfo + rst_OFF);
+    bpf_probe_read(&conn, sizeof(void *), rst + conn_OFF);
 
     // read seqnum
-    bpf_probe_read(&data.seqnum, sizeof data.seqnum, sampleinfo);
+    bpf_probe_read(&data_ptr->seqnum, sizeof data_ptr->seqnum, sampleinfo);
 
-    recv_cyclonedds.perf_submit(ctx, &data, sizeof(recv_cyclonedds_data_t));
+    // read port
+    bpf_probe_read(&data_ptr->dport, sizeof(u16), conn);
+    data_ptr->dport = cpu_to_be16(data_ptr->dport);
+    return 0;
+}
+int cyclone_dds_rhc_default_store_probe(struct pt_regs *ctx, void *rhc, void *wrinfo)
+{
+    recv_cyclonedds_data_t *data_ptr;
+    ddsi_guid_t *guid;
+    u32 pid;
+
+    pid = bpf_get_current_pid_tgid();
+    data_ptr = ddsrt_recvmsg_hash.lookup(&pid);
+    if (!data_ptr)
+        return 0;
+
+    strcpy(data_ptr->func, "ddsi_udp_conn_read exit");
+    bpf_get_current_comm(data_ptr->comm, sizeof data_ptr->comm);
+    data_ptr->subscriber = rhc;
+
+    // read guid
+    guid = (ddsi_guid_t *) data_ptr->guid;
+    bpf_probe_read(guid, sizeof data_ptr->guid, wrinfo);
+    guid->u[3] = cpu_to_be32(guid->u[3]); // change to big endian
+    cyclone_rhc_guid_hash.update(&rhc, guid);
+    recv_cyclonedds.perf_submit(ctx, data_ptr, sizeof(recv_cyclonedds_data_t));
+    return 0;
+}
+
+int cyclone_dds_rhc_default_take_wrap_probe(struct pt_regs *ctx, void *rhc, bool lock, void **values)
+{
+    struct cyclone_pub_key key = {};
+    rmw_take_metadata_t *metadata_ptr;
+    ddsi_guid_t *guid;
+    u32 pid = bpf_get_current_pid_tgid();
+
+    key.pid = pid;
+    bpf_probe_read(&key.ros_message, sizeof(void *), values);
+    if (!cyclone_take_hash.lookup(&key))
+        return 0;
+
+    metadata_ptr = message_info_hash.lookup(&pid);
+    if (!metadata_ptr)
+        return 0;
+
+    metadata_ptr->subscriber = rhc;
     return 0;
 }
 

@@ -72,20 +72,27 @@ class trace_recv(multiprocessing.Process):
         b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
                         sym="ddsi_udp_conn_read",
                         fn_name="cyclone_ddsi_udp_conn_read_probe")
-        b.attach_uretprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
-                           sym="ddsi_udp_conn_read",
-                           fn_name="cyclone_ddsi_udp_conn_read_retprobe")
+        # b.attach_uretprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
+        #                    sym="ddsi_udp_conn_read",
+        #                    fn_name="cyclone_ddsi_udp_conn_read_retprobe")
         # b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
         #                 sym="handle_regular",
         #                 fn_name="cyclone_handle_regular_probe")
         b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
                         sym="deliver_user_data",
                         fn_name="cyclone_deliver_user_data_probe")
+        b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
+                        sym="dds_rhc_default_store",
+                        fn_name="cyclone_dds_rhc_default_store_probe")
+        b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
+                        sym="dds_rhc_default_take_wrap",
+                        fn_name="cyclone_dds_rhc_default_take_wrap_probe")
+
 
     def run(self):
         # activate logging system
         fields = ['layer', 'ts', 'implementation', 'func', 'comm', 'topic_name', 'pid', 'subscriber', 'guid', 'seqnum', 'saddr', 'sport', 'daddr', 'dport']
-        fmtstr = '{:<10} {:<14.4f} {:<24} {:<28} {:<11} {:<22} {:<8} {:<#18x} {:<40} {:<3d} {:<#12x} {:<#12x} {:<#12x} {:<#12x}'
+        fmtstr = '{:<10} {:<13.4f} {:<22} {:<28} {:<11} {:<22} {:<8} {:<#18x} {:<45} {:<6d} {:<#12x} {:<#12x} {:<#12x} {:<#12x}'
         self.log = sofa_ros2_utilities.Log(fields=fields, fmtstr=fmtstr,
                                            cvsfilename='recv_log.csv', print_raw=self.is_alive())
 
