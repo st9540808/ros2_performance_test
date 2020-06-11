@@ -15,9 +15,29 @@ import ipaddress
 sys.path.insert(0, '/home/st9540808/Desktop/VS_Code/sofa/bin')
 import sofa_models, sofa_preprocess
 
-colors = ['DeepPink', 'RebeccaPurple', 'RoyalBlue', 'MediumSlateBlue']
-color = itertools.cycle(colors)
+colors_send = ['#14f2e0', '#41c8e5', '#6e9eeb']
+colors_recv = ['#9a75f0', '#c74bf6', '#f320fa', '#fe2bcc']
+color_send = itertools.cycle(colors_send)
+color_recv = itertools.cycle(colors_recv)
 
+sofa_fieldnames = [
+    "timestamp",  # 0
+    "event",      # 1
+    "duration",   # 2
+    "deviceId",   # 3
+    "copyKind",   # 4
+    "payload",    # 5
+    "bandwidth",  # 6
+    "pkt_src",    # 7
+    "pkt_dst",    # 8
+    "pid",        # 9
+    "tid",        # 10
+    "name",       # 11
+    "category",   # 12
+    "unit",
+    "msg_id"]
+
+# @profile
 def extract_individual_rosmsg(df_send, df_recv, *df_others):
     """ Return a dictionary with topic name as key and
         a list of ros message as value.
@@ -25,9 +45,9 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
         where (guid, seqnum) is a msg_id
     """
     # Convert timestamp to unix time
-    unix_time_off = statistics.median(sofa_time.get_unix_mono_diff() for i in range(100))
-    for df in (df_send, df_recv, *df_others):
-        df['ts'] = df['ts'] + unix_time_off
+    # unix_time_off = statistics.median(sofa_time.get_unix_mono_diff() for i in range(100))
+    # for df in (df_send, df_recv, *df_others):
+    #     df['ts'] = df['ts'] + unix_time_off
 
     # sort by timestamp
     df_send.sort_values(by=['ts'], ignore_index=True)
@@ -58,6 +78,7 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
         add_data_calls = df[~pd.isna(df['seqnum'])] # get all non-NaN seqnums in log
         try:
             pubaddr, = pd.unique(df['publisher']).dropna()
+            print(pubaddr)
         except ValueError as e:
             print('Find a guid that is not associated with a publisher memory address. Error: ' + str(e))
             continue
@@ -66,6 +87,7 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
         all_RTPSMsg_idx = ((df_send['func'] == '~RTPSMessageGroup') & (df_send['publisher'] == pubaddr))
         all_RTPSMsgret_idx = ((df_send['func'] == '~RTPSMessageGroup exit') & (df_send['publisher'] == pubaddr))
         all_sendSync_idx = ((df_send['func'] == 'sendSync') & (df_send['publisher'] == pubaddr))
+        all_nn_xpack_idx = (df['func'] == 'nn_xpack_send1')
         modified_rows = []
         for idx, add_data_call in add_data_calls.iterrows():
             ts = add_data_call['ts']
@@ -95,6 +117,16 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
                 modified_rows.extend(row for _, row in sendSync.iterrows())
             except ValueError as e:
                 pass
+
+            if 'rmw_cyclonedds_cpp' in df['implementation'].values:
+                try:
+                    df_cls = other_log_list[0][guid]
+                    seqnum = add_data_call.loc['seqnum']
+                    max_ts = df_cls[(df_cls['layer'] == 'cls_egress') & (df_cls['seqnum'] == seqnum)]['ts'].max()
+                    index = df.loc[(ts < df['ts']) & (df['ts'] < max_ts) & all_nn_xpack_idx].index
+                    df_send_partial.loc[index, 'seqnum'] = seqnum
+                except ValueError as e:
+                    pass
         df_send_partial = pd.concat([df_send_partial, pd.DataFrame(modified_rows)])
 
         # get a subscrption from log
@@ -112,21 +144,34 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
         for idx, add_recvchange_call in add_recvchange_calls.iterrows():
             ts = add_recvchange_call['ts']
             subaddr = add_recvchange_call.at['subscriber']
+            seqnum = add_recvchange_call.loc['seqnum']
 
             # Consider missing `rmw_take_with_info exit` here
             try:
                 rmw_take_idx = df.loc[(df['ts'] > ts) & subs_map[subaddr]]['ts'].idxmin()
-                df_recv_partial.at[rmw_take_idx, 'seqnum'] = add_recvchange_call.loc['seqnum']
+                df_recv_partial.at[rmw_take_idx, 'seqnum'] = seqnum
 
-                # Group rmw_wait
+                # TODO: Group by ip port in cls_ingress
+                UDPResourceReceive_idx = df.loc[(df['ts'] < ts) &
+                                                (df['func'] == 'UDPResourceReceive exit') &
+                                                (df['pid'] == add_recvchange_call.at['pid'])]['ts'].idxmax();
+                df_recv_partial.at[UDPResourceReceive_idx, 'seqnum'] = seqnum
+            except ValueError as e:
+                pass
+            try:
+                # Group rmw_wait exit
                 pid = df_recv_partial.at[rmw_take_idx, 'pid']
-                rmw_wait_idx = df_recv.loc[(df_recv['ts'] > ts) & pid_maps[pid]]['ts'].idxmin()
+                rmw_wait_idx = df_recv.loc[(df_recv['ts'] < df_recv_partial.at[rmw_take_idx,'ts']) &
+                                            pid_maps[pid]]['ts'].idxmax()
                 modified_row = df_recv.loc[rmw_wait_idx]
                 modified_row.at['seqnum'] = add_recvchange_call.at['seqnum']
                 modified_row.at['guid'] = guid
                 modified_rows.append(modified_row)
             except ValueError as e:
                 pass
+        # Doesn't need to remove duplicates for
+        # a = pd.DataFrame(modified_rows)
+        # print(a[~a.index.duplicated(keep='first')])
         df_recv_partial = pd.concat([df_recv_partial, pd.DataFrame(modified_rows)])
 
         # Merge all modified dataframes
@@ -150,9 +195,146 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
         if len(topic_name) > 1:
             raise Exception("More than one topic in a log file")
         topic_name = topic_name[0]
-        res[topic_name] = ros_msgs
+
+        if topic_name in res:
+            res[topic_name] = {**res[topic_name], **ros_msgs}
+        else:
+            res[topic_name] = ros_msgs
         print('finished parsing ' + topic_name)
     return res
+
+def extract_individual_rosmsg2(df_send, df_recv, df_cls):
+#     unix_time_off = statistics.median(sofa_time.get_unix_mono_diff() for i in range(100))
+#     for df in (df_send, df_recv, df_cls):
+#         df['ts'] = df['ts'] + unix_time_off
+
+    df_send.sort_values(by=['ts'], ignore_index=True)
+    df_recv.sort_values(by=['ts'], ignore_index=True)
+    df_cls.sort_values(by=['ts'], ignore_index=True)
+
+    # publish side
+    gb_send = df_send.groupby('guid')
+    all_publishers_log = {guid:log for guid, log in gb_send}
+
+    # subscription side
+    gb_recv = df_recv.groupby('guid')
+    all_subscriptions_log = {guid:log for guid, log in gb_recv}
+
+    # in kernel (probably not need it)
+    gb_cls = df_cls.groupby('guid')
+    all_cls_log = {guid:log for guid, log in gb_cls}
+
+    interested_guids = all_subscriptions_log.keys() \
+                     & all_publishers_log.keys()
+
+    res = {}
+    for guid in interested_guids:
+        # get a publisher from log
+        df = all_publishers_log[guid].copy()
+        df_send_partial = all_publishers_log[guid].copy()
+        add_data_calls = df[~pd.isna(df['seqnum'])] # get all non-NaN seqnums in log
+        try:
+            pubaddr, = pd.unique(df['publisher']).dropna()
+        except ValueError as e:
+            print('Find a guid that is not associated with a publisher memory address. Error: ' + str(e))
+            continue
+        print(pubaddr)
+
+        modified_rows = []
+        for idx, add_data_call in add_data_calls.iterrows():
+            seqnum = add_data_call['seqnum']
+            ts = add_data_call['ts']
+
+            rcl_idx = df.loc[(df['ts'] < ts) & (df['layer'] == 'rcl')]['ts'].idxmax()
+            df_send_partial.loc[rcl_idx, 'seqnum'] = add_data_call.loc['seqnum']
+
+            # Use the two timestamps to get a slice of dataframe
+            # Here we drop :~RTPSMessageGroup exit"
+            ts_cls = df_cls[(df_cls['guid']   == guid) &
+                            (df_cls['seqnum'] == seqnum) &
+                            (df_cls['layer']  == 'cls_egress')]['ts'].max() # Get ts upper bound
+            df_send_tgt = df_send[(ts <= df_send['ts']) &
+                                  (df_send['ts'] <= ts_cls) &
+                                  (df_send['publisher'] == pubaddr)]
+            modified_row = df_send_tgt.copy()
+            modified_row['guid'] = guid
+            modified_row['seqnum'] = seqnum
+            modified_rows.append(modified_row)
+        df_send_partial = df_send_partial.combine_first(pd.concat(modified_rows))
+
+        # get a subscrption from log
+        df = all_subscriptions_log[guid].copy()
+        df_recv_partial = all_subscriptions_log[guid].copy()
+        add_recvchange_calls = df[~pd.isna(df['seqnum'])] # get all not nan seqnums in log
+
+        all_sub = pd.unique(df['subscriber']) # How many subscribers subscribe to this topic?
+        subs_map = {sub: (df['subscriber'] == sub) &
+                         (df['func'] == "rmw_take_with_info exit") for sub in all_sub}
+        all_pid = pd.unique(df_recv['pid'])
+        pid_maps = {pid: (df_recv['pid'] == pid) &
+                         (df_recv['func'] == "rmw_wait exit") for pid in all_pid}
+        modified_rows = []
+        for idx, add_recvchange_call in add_recvchange_calls.iterrows():
+            ts = add_recvchange_call.at['ts']
+            subaddr = add_recvchange_call.at['subscriber']
+            seqnum = add_recvchange_call.at['seqnum']
+
+            # Use the two timestamps to get a slice of dataframe
+            ts_cls = df_cls[(df_cls['guid']   == guid) &
+                            (df_cls['seqnum'] == seqnum) &
+                            (df_cls['layer']  == 'cls_ingress')]['ts'].min()
+            df_recv_tgt = df_recv[(ts_cls < df_recv['ts']) & (df_recv['ts'] < ts)].copy()
+            # Consider missing `rmw_take_with_info exit` here
+            try:
+                rmw_take_idx = df.loc[(df['ts'] > ts) & subs_map[subaddr]]['ts'].idxmin()
+                df_recv_partial.at[rmw_take_idx, 'seqnum'] = seqnum
+
+                # TODO: Group by ip port in cls_ingress
+                UDPResourceReceive_idx = df_recv_tgt.loc[(df_recv_tgt['func'] == 'UDPResourceReceive exit') &
+                                                         (df_recv_tgt['pid'] == add_recvchange_call.at['pid'])]['ts'].idxmax();
+                df_recv_partial.at[UDPResourceReceive_idx, 'seqnum'] = seqnum
+
+                # Group rmw_wait exit
+                pid = df_recv_partial.at[rmw_take_idx, 'pid']
+                rmw_wait_idx = df_recv.loc[(df_recv['ts'] < df_recv_partial.at[rmw_take_idx,'ts']) &
+                                            pid_maps[pid]]['ts'].idxmax()
+                modified_row = df_recv.loc[rmw_wait_idx]
+                modified_row.at['seqnum'] = add_recvchange_call.at['seqnum']
+                modified_row.at['guid'] = guid
+                modified_rows.append(modified_row)
+            except ValueError as e:
+                pass
+        df_recv_partial = pd.concat([df_recv_partial, pd.DataFrame(modified_rows)])
+
+        # Merge all modified dataframes
+        df_merged = df_send_partial.append(df_recv_partial, ignore_index=True, sort=False)
+
+        # handle other log files
+        df_merged = df_merged.append(df_cls, ignore_index=True, sort=False)
+
+        # Avoid `TypeError: boolean value of NA is ambiguous` when calling groupby()
+        df_merged['subscriber'] = df_merged['subscriber'].fillna(np.nan)
+        df_merged['guid'] = df_merged['guid'].fillna(np.nan)
+        df_merged['seqnum'] = df_merged['seqnum'].fillna(np.nan)
+        df_merged.sort_values(by=['ts'], inplace=True)
+        gb_merged = df_merged.groupby(['guid', 'seqnum'])
+
+        ros_msgs = {msg_id:log for msg_id, log in gb_merged} # msg_id: (guid, seqnum)
+
+        # get topic name from log
+        topic_name = df_merged['topic_name'].dropna().unique()
+        if len(topic_name) > 1:
+            raise Exception("More than one topic in a log file")
+        topic_name = topic_name[0]
+        if res.get(topic_name) is None:
+            res[topic_name] = ros_msgs
+        else:
+            res[topic_name].update(ros_msgs)
+        print(type(res[topic_name]))
+        print('finished parsing ' + topic_name)
+
+    return res
+        # print(df_recv_partial[['layer', 'ts', 'func', 'guid', 'seqnum']])
 
 def print_all_msgs(res):
     for topic_name, all_msgs_log in res.items():
@@ -186,14 +368,15 @@ def ros_msgs_trace_read(items, cfg):
         "tid",        # 10
         "name",       # 11
         "category",   # 12
-        "unit"]
+        "unit",
+        "msg_id"]
 
     traces = []
     topic_name, all_msgs_log = items
     for msg_id, msg_log in all_msgs_log.items():
         # msg_log['subscriber'] = msg_log['subscriber'].apply(lambda x: np.nan if x is pd.NA else x)
         gb_sub = msg_log.groupby('subscriber') # How many subscribers receviced this ros message?
-        start = msg_log.iloc[0]
+        start = get_rcl_publish(msg_log)
         if start.at['layer'] != 'rcl': # skip when the first function call is not from rcl
             continue
 
@@ -213,6 +396,7 @@ def ros_msgs_trace_read(items, cfg):
                              start['topic_name'],
                              start['comm'], end['comm'])
             trace['unit'] = 'ms'
+            trace['msg_id'] = msg_id
             traces.append(trace)
     traces = pd.DataFrame(traces)
     return traces
@@ -250,7 +434,8 @@ def ros_msgs_trace_read_os_lat_send(items, cfg):
         "tid",        # 10
         "name",       # 11
         "category",   # 12
-        "unit"]
+        "unit",
+        "msg_id"]
 
     traces = []
     topic_name, all_msgs_log = items
@@ -259,14 +444,14 @@ def ros_msgs_trace_read_os_lat_send(items, cfg):
         if start.at['layer'] != 'rcl': # skip when the first function call is not from rcl
             continue
 
-        all_sendSync = msg_log.loc[msg_log['func'] == 'sendSync'].copy()
+        all_sendSync = msg_log.loc[(msg_log['func'] == 'sendSync') | (msg_log['func'] == 'nn_xpack_send1')].copy()
         all_egress = msg_log.loc[msg_log['layer'] == 'cls_egress']
 
         for _, sendSync in all_sendSync.iterrows():
             trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
-            addr = sendSync['daddr']
+            # addr = sendSync['daddr']
             port = sendSync['dport']
-            egress = all_egress.loc[(all_egress['daddr'] == addr) & (all_egress['dport'] == port)].iloc[0]
+            egress = all_egress.loc[(all_egress['dport'] == port)].iloc[0]
 
             time = sendSync['ts']
             if cfg is not None and not cfg.absolute_timestamp:
@@ -276,7 +461,7 @@ def ros_msgs_trace_read_os_lat_send(items, cfg):
             trace['name'] = "[%s] %s -> [%s] %s <br>Topic Name: %s<br>Destination address: %s:%d" % \
                             (sendSync['layer'], sendSync['func'], egress['layer'], '',
                              start['topic_name'],
-                             str(ipaddress.IPv4Address(socket.ntohl(int(addr)))),
+                             str(ipaddress.IPv4Address(socket.ntohl(int(all_egress['daddr'].unique())))),
                              socket.ntohs(int(port)))
             trace['unit'] = 'ms'
             trace['msg_id'] = msg_id
@@ -309,14 +494,20 @@ def ros_msgs_trace_read_os_lat_recv(items, cfg):
         if start.at['layer'] != 'rcl': # skip when the first function call is not from rcl
             continue
 
-        all_recv = msg_log.loc[msg_log['func'] == 'UDPResourceReceive exit'].copy()
+        all_recv = msg_log.loc[(msg_log['func'] == 'UDPResourceReceive exit') |
+                               (msg_log['func'] == 'ddsi_udp_conn_read exit')].copy()
         all_ingress = msg_log.loc[msg_log['layer'] == 'cls_ingress'].copy()
 
         for _, ingress in all_ingress.iterrows():
             trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
             addr = ingress['daddr']
             port = ingress['dport']
-            recv = all_recv.loc[(all_recv['dport'] == port)].iloc[0]
+            try:
+                recv = all_recv.loc[(all_recv['dport'] == port)].iloc[0]
+            except Exception as e:
+                print(str(msg_id) + " missing " + str(port))
+                print(e)
+                continue
 
             time = ingress['ts']
             if cfg is not None and not cfg.absolute_timestamp:
@@ -359,8 +550,9 @@ def ros_msgs_trace_read_dds_lat_send(items, cfg):
         if start.at['layer'] != 'rcl': # skip when the first function call is not from rcl
             continue
 
-        all_sendSync = msg_log.loc[msg_log['func'] == 'sendSync'].copy()
-        add_pub_change = msg_log.loc[msg_log['func'] == 'add_pub_change'].copy().squeeze()
+        all_sendSync = msg_log.loc[(msg_log['func'] == 'sendSync') | (msg_log['func'] == 'nn_xpack_send1')].copy()
+        add_pub_change = msg_log.loc[(msg_log['func'] == 'add_pub_change') |
+                                     (msg_log['func'] == 'write_sample_gc')].copy().squeeze()
 
         for _, sendSync in all_sendSync.iterrows():
             trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
@@ -416,13 +608,15 @@ def ros_msgs_trace_read_dds_ros_lat_recv(items, cfg):
 
             try:
                 pid_ros, = sub_log.loc[sub_log['func'] == 'rmw_take_with_info exit', 'pid'].unique() # shuold be unique
-                pid_dds, = sub_log.loc[sub_log['func'] == 'add_received_change', 'pid'].unique()
+                pid_dds, = sub_log.loc[(sub_log['func'] == 'add_received_change') |
+                                       (msg_log['func'] == 'ddsi_udp_conn_read exit'), 'pid'].unique()
             except ValueError as e:
                 print(e)
                 continue
 
             try: # Consider missing 'rmw_wait exit' here
-                os_return = msg_log.loc[(msg_log['func'] == 'UDPResourceReceive exit') & (msg_log['pid'] == pid_dds)].iloc[0]
+                os_return = msg_log.loc[((msg_log['func'] == 'UDPResourceReceive exit') | (msg_log['func'] == 'ddsi_udp_conn_read exit')) &
+                                         (msg_log['pid'] == pid_dds)].iloc[0]
                 dds_return = msg_log.loc[(msg_log['func'] == 'rmw_wait exit') & (msg_log['pid'] == pid_ros)].iloc[0]
                 ros_return = sub_log.loc[sub_log['func'] == 'rmw_take_with_info exit'].squeeze()
             except IndexError as e:
@@ -450,6 +644,9 @@ def ros_msgs_trace_read_dds_ros_lat_recv(items, cfg):
                  start['topic_name'], start['comm'], ros_return['comm'])
             trace_inros['unit'] = 'ms'
             trace_inros['msg_id'] = msg_id
+
+            if trace_inros['duration'] <= 0 or trace_indds['duration'] <= 0:
+                continue
 
             traces_indds.append(trace_indds)
             traces_inros.append(trace_inros)
@@ -538,7 +735,7 @@ def run(cfg):
             print(csv_file + ' is empty')
 
     all_msgs = extract_individual_rosmsg(df_send, df_recv, *df_others)
-    # print(all_msgs)
+    print(all_msgs)
 
     # TODO: Filiter topics
 
@@ -561,7 +758,7 @@ def run(cfg):
             item = future_res[future]
             topic = item[0]
             os_lat_send.append(future.result())
-    # print(os_lat_send)
+    print(os_lat_send)
 
     dds_lat_send = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
@@ -570,7 +767,7 @@ def run(cfg):
             item = future_res[future]
             topic = item[0]
             dds_lat_send.append(future.result())
-    # print(dds_lat_send)
+    print(dds_lat_send)
 
     os_lat_recv = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
@@ -591,8 +788,8 @@ def run(cfg):
             # topic = item[0]
             dds_lat_recv.append(future.result()[0])
             ros_executor_recv.append(future.result()[1])
-    # print(dds_lat_recv)
-    # print(ros_executor_recv)
+    print(dds_lat_recv)
+    print(ros_executor_recv)
 
     sofatrace = sofa_models.SOFATrace()
     sofatrace.name = 'ros2_latency'
@@ -665,6 +862,35 @@ def run(cfg):
             sofatrace_dds_lat_send, sofatrace_dds_lat_recv,
             sofatrace_os_lat_send, sofatrace_os_lat_recv, sofatrace_targets]
 
+def benchmarking():
+    read_csv = functools.partial(pd.read_csv, dtype={
+        'pid':'Int32', 'seqnum':'Int64', 'subscriber':'Int64', 'publisher':'Int64'})
+    cvs_files_others = ['cls_bpf_log.csv']
+    df_send = read_csv('send_log.csv')
+    df_recv = read_csv('recv_log.csv')
+
+    try:
+        all_send = df_send[(df_send['topic_name'] == '/chatter') & (df_send['func'] == 'rcl_publish')]
+        guid = all_send['guid'].unique()[0]
+        all_recv = df_recv[(df_recv['guid'] == guid) & (df_recv['func'] == 'rmw_take_with_info exit')]
+    except Exception as e:
+        all_send = df_send[df_send['comm'] == 'talker']
+        all_recv = df_recv
+
+    for ((_, send), (_, recv)) in zip(all_send.iterrows(), all_recv.iterrows()):
+        print('{:.4f}'.format((recv.at['ts'] - send.at['ts']) * 1000))
+
+def run2():
+    read_csv = functools.partial(pd.read_csv, dtype={
+        'pid':'Int32', 'seqnum':'Int64', 'subscriber':'Int64', 'publisher':'Int64'})
+    df_send = read_csv('send_log.csv')
+    df_recv = read_csv('recv_log.csv')
+    df_cls1 = read_csv('cls_bpf_log.csv')
+    df_cls2 = read_csv('cls_bpf_log2.csv')
+    df_cls = pd.concat([df_cls1, df_cls2])
+
+    return extract_individual_rosmsg2(df_send, df_recv, df_cls)
+
 if __name__ == "__main__":
     # read_csv = functools.partial(pd.read_csv, dtype={'pid':'Int32', 'seqnum':'Int64'})
     # df_send = read_csv('send_log.csv')
@@ -673,6 +899,19 @@ if __name__ == "__main__":
     # res = extract_individual_rosmsg(df_send, df_recv, df_cls)
     # print_all_msgs(res)
 
+    # benchmarking()
+    # ./sofa_ros2_preprocess.py | Rscript -e 'summary (as.numeric (readLines ("stdin")))'
+
+    # Use method 1
     res = run(None)
-    for r in res:
-        print(r.data)
+    # for r in res:
+    #     print(r.data)
+
+    # Use method 2
+    # res = run2()
+    # print_all_msgs(res)
+
+    # np.set_printoptions(precision=4)
+    # a = res[0].data['duration'].to_list()
+    # for lat in a:
+    #     print('{:.4f}'.format(lat))
