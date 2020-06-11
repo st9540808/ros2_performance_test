@@ -84,10 +84,15 @@ class trace_recv(multiprocessing.Process):
         b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
                         sym="dds_rhc_default_store",
                         fn_name="cyclone_dds_rhc_default_store_probe")
+        b.attach_uretprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
+                           sym="dds_rhc_default_store",
+                           fn_name="cyclone_dds_rhc_default_store_retprobe")
         b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
                         sym="dds_rhc_default_take_wrap",
                         fn_name="cyclone_dds_rhc_default_take_wrap_probe")
-
+        b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
+                        sym="free_sample",
+                        fn_name="cyclone_free_sample_probe")
 
     def run(self):
         # activate logging system

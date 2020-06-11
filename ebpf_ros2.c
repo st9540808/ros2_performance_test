@@ -574,6 +574,7 @@ typedef struct rmw_take_metadata_t {
 BPF_HASH(message_info_hash, u32, rmw_take_metadata_t, 1024);
 BPF_HASH(cyclone_take_hash, struct cyclone_pub_key, int, 1024); // a set for (ros_message, pid)
 BPF_HASH(cyclone_rhc_guid_hash, void *, ddsi_guid_t, 1024); // map pointer to rhc to guid
+BPF_HASH(cyclone_sample_seqnum_hash, void *, u64, 512); // map pointer to sample to seqnum
 
 int rmw_wait_retprobe(struct pt_regs *ctx) {
     recv_rmw_data_t data = {};
@@ -885,7 +886,7 @@ int cyclone_deliver_user_data_probe(struct pt_regs *ctx, void *sampleinfo)
     data_ptr->dport = cpu_to_be16(data_ptr->dport);
     return 0;
 }
-int cyclone_dds_rhc_default_store_probe(struct pt_regs *ctx, void *rhc, void *wrinfo)
+int cyclone_dds_rhc_default_store_probe(struct pt_regs *ctx, void *rhc, void *wrinfo, void *sample)
 {
     recv_cyclonedds_data_t *data_ptr;
     ddsi_guid_t *guid;
@@ -905,7 +906,20 @@ int cyclone_dds_rhc_default_store_probe(struct pt_regs *ctx, void *rhc, void *wr
     bpf_probe_read(guid, sizeof data_ptr->guid, wrinfo);
     guid->u[3] = cpu_to_be32(guid->u[3]); // change to big endian
     cyclone_rhc_guid_hash.update(&rhc, guid);
+    cyclone_sample_seqnum_hash.update(&sample, &data_ptr->seqnum);
     recv_cyclonedds.perf_submit(ctx, data_ptr, sizeof(recv_cyclonedds_data_t));
+    return 0;
+}
+int cyclone_dds_rhc_default_store_retprobe(struct pt_regs *ctx)
+{
+    int ret = PT_REGS_RC(ctx);
+    if (!ret) {
+        recv_cyclonedds_data_t data = {};
+        data.ts = bpf_ktime_get_ns();
+        data.pid = bpf_get_current_pid_tgid();
+        strcpy(data.func, "rhc_default_store fail");
+        recv_cyclonedds.perf_submit(ctx, &data, sizeof(recv_cyclonedds_data_t));
+    }
     return 0;
 }
 
@@ -915,17 +929,38 @@ int cyclone_dds_rhc_default_take_wrap_probe(struct pt_regs *ctx, void *rhc, bool
     rmw_take_metadata_t *metadata_ptr;
     ddsi_guid_t *guid;
     u32 pid = bpf_get_current_pid_tgid();
+    u64 *seqnum_ptr;
 
+    // see current pid and pointer to ros_message exist
     key.pid = pid;
     bpf_probe_read(&key.ros_message, sizeof(void *), values);
     if (!cyclone_take_hash.lookup(&key))
         return 0;
 
+    // read metadata written by rmw_take probe
     metadata_ptr = message_info_hash.lookup(&pid);
     if (!metadata_ptr)
         return 0;
 
     metadata_ptr->subscriber = rhc;
+    return 0;
+}
+int cyclone_free_sample_probe(struct pt_regs *ctx, void *inst, void *s)
+{
+    recv_cyclonedds_data_t data = {};
+    u64 *seqnum_ptr;
+    void *sample;
+
+    bpf_probe_read(&sample, sizeof(void *), s);
+    seqnum_ptr = cyclone_sample_seqnum_hash.lookup(&sample);
+    if (!seqnum_ptr)
+        return 0;
+
+    data.seqnum = *seqnum_ptr;
+    data.ts = bpf_ktime_get_ns();
+    data.pid = bpf_get_current_pid_tgid();
+    strcpy(data.func, "free_sample");
+    recv_cyclonedds.perf_submit(ctx, &data, sizeof(recv_cyclonedds_data_t));
     return 0;
 }
 
