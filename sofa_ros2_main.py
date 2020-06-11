@@ -62,6 +62,9 @@ class trace_main:
         for proc in self.perf_procs:
             sofa_print.print_main_progress('Starting %s' % type(proc).__name__)
             proc.start()
+        # TODO: Use a process synchronization to eliminate race condition for
+        #       eBPF attach_probe and profiled program
+        time.sleep(1.5)
 
     def terminate(self):
         self.end.set()
