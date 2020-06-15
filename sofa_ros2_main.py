@@ -9,33 +9,32 @@ import ebpf_ros2_trace_recv
 import ebpf_ros2_trace_tc_act
 from bcc import BPF
 
-sys.path.insert(0, '/home/st9540808/Desktop/VS_Code/sofa/bin')
+sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
 import sofa_print
+import sofa_config
 
-WHITELIST = False
-BLACKLIST = False
 # all processes will be interrupt when enter a Ctrl-C to sofa_ros2_main.py
 class trace_main:
     def __init__(self, cfg=None):
-        self.enable_whitelist = WHITELIST # default to disable whitelist
-        self.enable_blacklist = BLACKLIST
         if cfg is not None:
-            if self.enable_whitelist:
-                self.enable_whitelist = cfg.ros2_topic_whitelist
+            if cfg.ros2_topic_whitelist:
                 sofa_print.print_hint("enable ros2 topic whitelist")
-            if self.enable_blacklist:
-                self.enable_blacklist = cfg.ros2_topic_blacklist
+            # Not implemented yet
+            if cfg.ros2_topic_blacklist:
                 sofa_print.print_hint("enable ros2 topic blacklist")
+        else:
+            cfg = sofa_config.SOFA_Config()
 
-        config = {'whitelist': self.enable_whitelist, 'blacklist': self.enable_blacklist}
         cflags = []
-        if config['whitelist']:
+        if cfg.ros2_topic_whitelist:
             cflags.append('-DWHITELIST=1')
         b = BPF(src_file='./ebpf_ros2.c', cflags=cflags)
 
+        os.makedirs(os.path.join(cfg.logdir, cfg.ros2logdir), exist_ok=True)
+
         self.end = multiprocessing.Event()
         self.ready = multiprocessing.Event()
-        arg = {'set':self.end, 'config':config, 'b': b}
+        arg = {'set': self.end, 'config': cfg, 'b': b}
         self.perf_procs = [ebpf_ros2_trace_tc_act.trace_tc_act(args=(arg)),
                            ebpf_ros2_trace_send.trace_send(args=(arg)),
                            ebpf_ros2_trace_recv.trace_recv(args=(arg))]

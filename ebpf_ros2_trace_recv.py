@@ -3,12 +3,16 @@
 from __future__ import print_function
 from bcc import BPF
 from bcc.utils import printb
+import sys
 import os
 import multiprocessing
 import json
 import sofa_time
 import sofa_ros2_utilities
 from sofa_ros2_utilities import perf_callback_factory
+
+sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
+import sofa_config
 
 class trace_recv(multiprocessing.Process):
     @perf_callback_factory(event_name='recv_rmw',
@@ -37,7 +41,7 @@ class trace_recv(multiprocessing.Process):
         super().__init__(*args, **kwargs)
         arg = kwargs['args']
         self.set = arg['set']
-        self.config = arg['config']
+        self.cfg = arg['config']
 
         # attach eBPF programs to probes
         self.b = b = arg['b']
@@ -99,7 +103,8 @@ class trace_recv(multiprocessing.Process):
         fields = ['layer', 'ts', 'implementation', 'func', 'comm', 'topic_name', 'pid', 'subscriber', 'guid', 'seqnum', 'saddr', 'sport', 'daddr', 'dport']
         fmtstr = '{:<10} {:<13.4f} {:<22} {:<28} {:<11} {:<22} {:<8} {:<#18x} {:<45} {:<6d} {:<#12x} {:<#12x} {:<#12x} {:<#12x}'
         self.log = sofa_ros2_utilities.Log(fields=fields, fmtstr=fmtstr,
-                                           cvsfilename='recv_log.csv', print_raw=self.is_alive())
+                                           cvsfilename=os.path.join(self.cfg.logdir, self.cfg.ros2logdir, 'recv_log.csv'),
+                                           print_raw=self.is_alive())
 
         # loop with callback to print_event
         b = self.b
@@ -115,12 +120,12 @@ class trace_recv(multiprocessing.Process):
         print("[trace_recv] Exit")
 
 if __name__ == "__main__":
-    config = {'whitelist': False, 'blacklist': False}
+    cfg = sofa_config.SOFA_Config()
 
     cflags = []
-    if config['whitelist']:
+    if cfg.ros2_topic_whitelist:
         cflags.append('-DWHITELIST=1')
     b = BPF(src_file='./ebpf_ros2.c', cflags=cflags)
 
-    trace = trace_recv(args=({'set': multiprocessing.Event(), 'config': config, 'b': b}))
+    trace = trace_recv(args=({'set': multiprocessing.Event(), 'config': cfg, 'b': b}))
     trace.run()

@@ -12,15 +12,16 @@ import multiprocessing as mp
 import socket
 import ipaddress
 
-sys.path.insert(0, '/home/st9540808/Desktop/VS_Code/sofa/bin')
+sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
 import sofa_models, sofa_preprocess
+import sofa_config
 
 colors_send = ['#14f2e0', '#41c8e5', '#6e9eeb']
 colors_recv = ['#9a75f0', '#c74bf6', '#f320fa', '#fe2bcc']
 color_send = itertools.cycle(colors_send)
 color_recv = itertools.cycle(colors_recv)
 
-sofa_fieldnames = [
+sofa_ros2_fieldnames = [
     "timestamp",  # 0
     "event",      # 1
     "duration",   # 2
@@ -34,8 +35,8 @@ sofa_fieldnames = [
     "tid",        # 10
     "name",       # 11
     "category",   # 12
-    "unit",
-    "msg_id"]
+    "unit",       # 13
+    "msg_id"]     # 14
 
 # @profile
 def extract_individual_rosmsg(df_send, df_recv, *df_others):
@@ -45,9 +46,9 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
         where (guid, seqnum) is a msg_id
     """
     # Convert timestamp to unix time
-    # unix_time_off = statistics.median(sofa_time.get_unix_mono_diff() for i in range(100))
-    # for df in (df_send, df_recv, *df_others):
-    #     df['ts'] = df['ts'] + unix_time_off
+    unix_time_off = statistics.median(sofa_time.get_unix_mono_diff() for i in range(100))
+    for df in (df_send, df_recv, *df_others):
+        df['ts'] = df['ts'] + unix_time_off
 
     # sort by timestamp
     df_send.sort_values(by=['ts'], ignore_index=True)
@@ -354,7 +355,7 @@ def get_rcl_publish(df):
 
 # @profile
 def ros_msgs_trace_read(items, cfg):
-    sofa_fieldnames = [
+    sofa_ros2_fieldnames = [
         "timestamp",  # 0
         "event",      # 1
         "duration",   # 2
@@ -381,7 +382,7 @@ def ros_msgs_trace_read(items, cfg):
             continue
 
         for sub_addr, sub_log in gb_sub:
-            trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+            trace = dict(zip(sofa_ros2_fieldnames, itertools.repeat(-1)))
             end = sub_log.iloc[-1]
             if end.at['layer'] != 'rmw': # skip when the last function call is not from rmw (eg. rosbag2)
                 continue
@@ -402,7 +403,7 @@ def ros_msgs_trace_read(items, cfg):
     return traces
 
 def ros_msgs_trace_read_ros_lat_send(items, cfg):
-    sofa_fieldnames = [
+    sofa_ros2_fieldnames = [
         "timestamp",  # 0
         "event",      # 1
         "duration",   # 2
@@ -420,7 +421,7 @@ def ros_msgs_trace_read_ros_lat_send(items, cfg):
         "msg_id"]
 
 def ros_msgs_trace_read_os_lat_send(items, cfg):
-    sofa_fieldnames = [
+    sofa_ros2_fieldnames = [
         "timestamp",  # 0
         "event",      # 1
         "duration",   # 2
@@ -448,7 +449,7 @@ def ros_msgs_trace_read_os_lat_send(items, cfg):
         all_egress = msg_log.loc[msg_log['layer'] == 'cls_egress']
 
         for _, sendSync in all_sendSync.iterrows():
-            trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+            trace = dict(zip(sofa_ros2_fieldnames, itertools.repeat(-1)))
             # addr = sendSync['daddr']
             port = sendSync['dport']
             egress = all_egress.loc[(all_egress['dport'] == port)].iloc[0]
@@ -470,7 +471,7 @@ def ros_msgs_trace_read_os_lat_send(items, cfg):
     return traces
 
 def ros_msgs_trace_read_os_lat_recv(items, cfg):
-    sofa_fieldnames = [
+    sofa_ros2_fieldnames = [
         "timestamp",  # 0
         "event",      # 1
         "duration",   # 2
@@ -499,7 +500,7 @@ def ros_msgs_trace_read_os_lat_recv(items, cfg):
         all_ingress = msg_log.loc[msg_log['layer'] == 'cls_ingress'].copy()
 
         for _, ingress in all_ingress.iterrows():
-            trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+            trace = dict(zip(sofa_ros2_fieldnames, itertools.repeat(-1)))
             addr = ingress['daddr']
             port = ingress['dport']
             try:
@@ -526,7 +527,7 @@ def ros_msgs_trace_read_os_lat_recv(items, cfg):
     return traces
 
 def ros_msgs_trace_read_dds_lat_send(items, cfg):
-    sofa_fieldnames = [
+    sofa_ros2_fieldnames = [
         "timestamp",  # 0
         "event",      # 1
         "duration",   # 2
@@ -555,7 +556,7 @@ def ros_msgs_trace_read_dds_lat_send(items, cfg):
                                      (msg_log['func'] == 'write_sample_gc')].copy().squeeze()
 
         for _, sendSync in all_sendSync.iterrows():
-            trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+            trace = dict(zip(sofa_ros2_fieldnames, itertools.repeat(-1)))
 
             time = add_pub_change['ts']
             if cfg is not None and not cfg.absolute_timestamp:
@@ -572,7 +573,7 @@ def ros_msgs_trace_read_dds_lat_send(items, cfg):
     return traces
 
 def ros_msgs_trace_read_dds_ros_lat_recv(items, cfg):
-    sofa_fieldnames = [
+    sofa_ros2_fieldnames = [
         "timestamp",  # 0
         "event",      # 1
         "duration",   # 2
@@ -600,8 +601,8 @@ def ros_msgs_trace_read_dds_ros_lat_recv(items, cfg):
             continue
 
         for sub_addr, sub_log in gb_sub:
-            trace_indds = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
-            trace_inros = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+            trace_indds = dict(zip(sofa_ros2_fieldnames, itertools.repeat(-1)))
+            trace_inros = dict(zip(sofa_ros2_fieldnames, itertools.repeat(-1)))
             end = sub_log.iloc[-1]
             if end.at['layer'] != 'rmw': # skip when the last function call is not from rmw (eg. rosbag2)
                 continue
@@ -655,7 +656,7 @@ def ros_msgs_trace_read_dds_ros_lat_recv(items, cfg):
     return (traces_dds, traces_ros)
 
 def ros_msgs_trace_read_NET_real(items, cfg):
-    sofa_fieldnames = [
+    sofa_ros2_fieldnames = [
         "timestamp",  # 0
         "event",      # 1
         "duration",   # 2
@@ -680,7 +681,7 @@ def ros_msgs_trace_read_NET_real(items, cfg):
             continue
 
         for _, sendSync in all_sendSync.iterrows():
-            trace = dict(zip(sofa_fieldnames, itertools.repeat(-1)))
+            trace = dict(zip(sofa_ros2_fieldnames, itertools.repeat(-1)))
 
             time = add_pub_change['ts']
             if cfg is not None and not cfg.absolute_timestamp:
@@ -700,7 +701,7 @@ def find_outliers(all_traces, filt):
     mean = filt.data['duration'].mean()
     std = filt.data['duration'].std()
     thres = mean + std * 3
-    targets_trace = pd.DataFrame(columns=sofa_fieldnames)
+    targets_trace = pd.DataFrame(columns=sofa_ros2_fieldnames)
     targets = filt.data.loc[filt.data['duration'] > thres, 'msg_id']
     for idx, msg_id in targets.iteritems():
         pts = []
@@ -724,9 +725,21 @@ def run(cfg):
     # TODO: convert addr and port to uint32, uint16
     read_csv = functools.partial(pd.read_csv, dtype={
         'pid':'Int32', 'seqnum':'Int64', 'subscriber':'Int64', 'publisher':'Int64'})
+
+    send_log = 'send_log.csv'
+    recv_log = 'recv_log.csv'
     cvs_files_others = ['cls_bpf_log.csv']
-    df_send = read_csv('send_log.csv')
-    df_recv = read_csv('recv_log.csv')
+
+    if cfg is None:
+        cfg = sofa_config.SOFA_Config()
+
+    send_log = os.path.join(cfg.logdir, cfg.ros2logdir, 'send_log.csv')
+    recv_log = os.path.join(cfg.logdir, cfg.ros2logdir, 'recv_log.csv')
+    for idx in range(len(cvs_files_others)):
+        cvs_files_others[idx] = os.path.join(cfg.logdir, cfg.ros2logdir, cvs_files_others[idx])
+
+    df_send = read_csv(send_log)
+    df_recv = read_csv(recv_log)
     df_others = []
     for csv_file in cvs_files_others:
         try:

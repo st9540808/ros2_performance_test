@@ -4,9 +4,13 @@ from bcc import BPF
 import pyroute2
 import time
 import sys
+import os
 import multiprocessing
 import sofa_ros2_utilities
 from sofa_ros2_utilities import perf_callback_factory
+
+sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
+import sofa_config
 
 # device = sys.argv[1]
 #mode = BPF.XDP
@@ -31,7 +35,7 @@ class trace_tc_act(multiprocessing.Process):
         super().__init__(*args, **kwargs)
         arg = kwargs['args']
         self.set = arg['set']
-        self.config = arg['config']
+        self.cfg = arg['config']
 
         # load BPF program
         self.b = arg['b']
@@ -44,7 +48,8 @@ class trace_tc_act(multiprocessing.Process):
         fields = ['layer', 'ts', 'guid', 'seqnum', 'msg_id', 'saddr', 'sport', 'daddr', 'dport']
         fmtstr = '{:<20} {:<13.5f} {:<40} {:<7d} {:<10} {:<#12x} {:<#12x} {:<#12x} {:<#12x}'
         self.log = sofa_ros2_utilities.Log(fields=fields, fmtstr=fmtstr,
-                                           cvsfilename='cls_bpf_log.csv', print_raw=self.is_alive())
+                                           cvsfilename=os.path.join(self.cfg.logdir, self.cfg.ros2logdir, 'cls_bpf_log.csv'),
+                                           print_raw=self.is_alive())
 
         b = self.b
         fn_egress = b.load_func("cls_ros2_egress_prog", mode)
@@ -76,12 +81,12 @@ class trace_tc_act(multiprocessing.Process):
         ipdb.release()
 
 if __name__ == "__main__":
-    config = {'whitelist': False, 'blacklist': False}
+    cfg = sofa_config.SOFA_Config()
 
     cflags = []
-    if config['whitelist']:
+    if cfg.ros2_topic_whitelist:
         cflags.append('-DWHITELIST=1')
     b = BPF(src_file='./ebpf_ros2.c', cflags=cflags)
 
-    trace = trace_tc_act(args=({'set': multiprocessing.Event(), 'config': config, 'b': b}))
+    trace = trace_tc_act(args=({'set': multiprocessing.Event(), 'config': cfg, 'b': b}))
     trace.run()

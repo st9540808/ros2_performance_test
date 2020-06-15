@@ -3,6 +3,7 @@
 from __future__ import print_function
 from bcc import BPF
 from bcc.utils import printb
+import sys
 import os
 import multiprocessing
 import ctypes
@@ -10,6 +11,9 @@ import json
 import sofa_time
 import sofa_ros2_utilities
 from sofa_ros2_utilities import perf_callback_factory
+
+sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
+import sofa_config
 
 topic = ctypes.c_byte * 40
 class Key(ctypes.Structure):
@@ -48,7 +52,7 @@ class trace_send(multiprocessing.Process):
         super().__init__(*args, **kwargs)
         arg = kwargs['args']
         self.set = arg['set']
-        self.config = arg['config']
+        self.cfg = arg['config']
 
         # attach eBPF programs to probes
         self.b = b = arg['b']
@@ -99,7 +103,7 @@ class trace_send(multiprocessing.Process):
                            fn_name="cyclone_write_sample_gc_retprobe")
 
         # topic filter (whitelist)
-        if self.config['whitelist'] and os.path.exists('whitelist.txt'):
+        if self.cfg.ros2_topic_whitelist and os.path.exists('whitelist.txt'):
             with open('whitelist.txt') as f:
                 whitelist = b["whitelist"]
                 lines = filter(lambda x: len(x) >= 1, f.read().splitlines())
@@ -114,8 +118,8 @@ class trace_send(multiprocessing.Process):
         fmtstr = '{:<10} {:<13.5f} {:<20} {:<28} {:<16} {:<8} {:<22} {:<#18x} {:<44} {:<6d} {:<#12x} {:<#12x}'
         fields = ['layer', 'ts', 'implementation', 'func', 'comm', 'pid', 'topic_name', 'publisher', 'guid', 'seqnum', 'daddr', 'dport']
         self.log = sofa_ros2_utilities.Log(fields=fields, fmtstr=fmtstr,
-                                           cvsfilename='send_log.csv', print_raw=self.is_alive())
-
+                                           cvsfilename=os.path.join(self.cfg.logdir, self.cfg.ros2logdir, 'send_log.csv'),
+                                           print_raw=self.is_alive())
         # loop with callback to print_event
         b = self.b
         b["send_rcl"].open_perf_buffer(self.print_rcl)
@@ -132,12 +136,12 @@ class trace_send(multiprocessing.Process):
 
 
 if __name__ == "__main__":
-    config = {'whitelist': False, 'blacklist': False}
+    cfg = sofa_config.SOFA_Config()
 
     cflags = []
-    if config['whitelist']:
+    if cfg.ros2_topic_whitelist:
         cflags.append('-DWHITELIST=1')
     b = BPF(src_file='./ebpf_ros2.c', cflags=cflags)
 
-    trace = trace_send(args=({'set': multiprocessing.Event(), 'config': config, 'b': b}))
+    trace = trace_send(args=({'set': multiprocessing.Event(), 'config': cfg, 'b': b}))
     trace.run()
