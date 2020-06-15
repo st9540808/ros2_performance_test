@@ -4,6 +4,8 @@ import ctypes, os
 import time
 import sys
 import subprocess
+import sofa_ros2_utilities
+import multiprocessing
 
 __all__ = ["get_monotonic_time"]
 
@@ -59,18 +61,56 @@ def get_time_offset_from(serv_addr):
         return 0
     return off.value
 
+def record_time_offset_from(serv_addr, set):
+    log = sofa_ros2_utilities.Log(['bios_time', 'time_offset'], '{:<13.5f} {:<13.5f}',
+                                  'sofalog/time_offset.csv')
+    while not set.is_set():
+        try:
+            off = get_time_offset_from(serv_addr)
+            log.print({'bios_time': time.time(), 'time_offset': off})
+            time.sleep(2)
+        except KeyboardInterrupt:
+            break
+    log.close()
+
+class span_server_and_record_from(multiprocessing.Process):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        arg = kwargs['args']
+        self.set = arg['set']
+        self.serv_addr = arg['serv_addr']
+
+    def run(self):
+        server = subprocess.Popen(['./time_adjust_server'])
+        record_time_offset_from(self.serv_addr, self.set)
+        server.kill()
+        print("[span_server_and_record_from] Exit")
+
+
 if __name__ == "__main__":
     # print(get_monotonic_time())
     # print(time.time() - get_monotonic_time())
     # print(time.monotonic())
     # print(time.time() - time.monotonic())
-    my_list = []
-    for i in range(1000):
-        data = [int(time.time()*1e3), round(get_time_offset_from('192.168.3.1')*1e3, 6)]
-        my_list.append(data)
 
-        print(data[0], data[1])
-        time.sleep(0.03)
-    import json
-    with open('./sofalog/time_offset.js', 'w') as f:
-        f.write('time_offset = ' + json.dumps(my_list))
+    # my_list = []
+    # for i in range(1000):
+    #     data = [int(time.time()*1e3), round(get_time_offset_from('192.168.3.1')*1e3, 6)]
+    #     my_list.append(data)
+
+    #     print(data[0], data[1])
+    #     time.sleep(0.03)
+    # import json
+    # with open('./sofalog/time_offset.js', 'w') as f:
+    #     f.write('time_offset = ' + json.dumps(my_list))
+
+    print(sys.argv[1])
+    sr = span_server_and_record_from(args={'set':multiprocessing.Event(), 'serv_addr': sys.argv[1]})
+
+    sr.start()
+    while True:
+        try:
+            time.sleep(0.1)
+        except KeyboardInterrupt as e:
+            break
+    sr.terminate()
