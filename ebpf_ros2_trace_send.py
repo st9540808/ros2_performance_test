@@ -12,7 +12,7 @@ import sofa_time
 import sofa_ros2_utilities
 from sofa_ros2_utilities import perf_callback_factory
 
-sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
+# sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
 import sofa_config
 
 topic = ctypes.c_byte * 40

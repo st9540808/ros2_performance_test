@@ -12,7 +12,7 @@ import multiprocessing as mp
 import socket
 import ipaddress
 
-sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
+# sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
 import sofa_models, sofa_preprocess
 import sofa_config
 

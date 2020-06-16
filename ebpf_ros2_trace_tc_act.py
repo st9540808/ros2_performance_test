@@ -9,7 +9,7 @@ import multiprocessing
 import sofa_ros2_utilities
 from sofa_ros2_utilities import perf_callback_factory
 
-sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
+# sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
 import sofa_config
 
 # device = sys.argv[1]

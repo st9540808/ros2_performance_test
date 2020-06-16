@@ -9,7 +9,7 @@ import ebpf_ros2_trace_recv
 import ebpf_ros2_trace_tc_act
 from bcc import BPF
 
-sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
+# sys.path.insert(0, '/home/st9540808/Desktop/sofa/bin')
 import sofa_print
 import sofa_config
 
