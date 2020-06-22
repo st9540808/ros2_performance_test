@@ -89,9 +89,15 @@ class trace_send(multiprocessing.Process):
         b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
                         sym="dds_write_impl",
                         fn_name="cyclone_dds_write_impl_probe")
-        b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
-                        sym="whc_default_insert_seq",
-                        fn_name="cyclone_whc_default_insert_seq")
+        try:
+            b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
+                            sym="whc_default_insert_seq",
+                            fn_name="cyclone_whc_default_insert_seq")
+        except Exception as e:
+            print("Failed to attach eBPF to whc_default_insert_seq\n" + str(e))
+            b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
+                            sym="whc_default_next_seq",
+                            fn_name="cyclone_whc_default_insert_seq")
         b.attach_uprobe(name=os.path.realpath('/opt/ros/dashing/lib/libddsc.so'),
                         sym="nn_xpack_send1",
                         fn_name="cyclone_nn_xpack_send1")

@@ -4,6 +4,7 @@ import multiprocessing
 import time
 import sys
 import os
+import pathlib
 import ebpf_ros2_trace_send
 import ebpf_ros2_trace_recv
 import ebpf_ros2_trace_tc_act
@@ -28,7 +29,8 @@ class trace_main:
         cflags = []
         if cfg.ros2_topic_whitelist:
             cflags.append('-DWHITELIST=1')
-        b = BPF(src_file='./ebpf_ros2.c', cflags=cflags)
+        b = BPF(src_file=os.path.join(pathlib.Path(__file__).parent.absolute(), './ebpf_ros2.c'),
+                cflags=cflags)
 
         os.makedirs(os.path.join(cfg.logdir, cfg.ros2logdir), exist_ok=True)
 

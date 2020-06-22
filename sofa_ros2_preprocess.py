@@ -155,7 +155,7 @@ def extract_individual_rosmsg(df_send, df_recv, *df_others):
                 # TODO: Group by ip port in cls_ingress
                 UDPResourceReceive_idx = df.loc[(df['ts'] < ts) &
                                                 (df['func'] == 'UDPResourceReceive exit') &
-                                                (df['pid'] == add_recvchange_call.at['pid'])]['ts'].idxmax();
+                                                (df['pid'] == add_recvchange_call.at['pid'])]['ts'].idxmax()
                 df_recv_partial.at[UDPResourceReceive_idx, 'seqnum'] = seqnum
             except ValueError as e:
                 pass
